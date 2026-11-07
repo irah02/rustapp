@@ -132,54 +132,6 @@
           };
         });
 
-        // Ensure at least one audio input (microphone) is always reported
-        if (!result.some((d) => d.kind === 'audioinput')) {
-          result.push({
-            deviceId: 'default-audio-in',
-            groupId: 'default-group',
-            kind: 'audioinput',
-            label: 'System Microphone (Default)',
-            toJSON: () => ({
-              deviceId: 'default-audio-in',
-              groupId: 'default-group',
-              kind: 'audioinput',
-              label: 'System Microphone (Default)',
-            }),
-          });
-        }
-
-        // Ensure at least one video input (camera) is always reported
-        if (!result.some((d) => d.kind === 'videoinput')) {
-          result.push({
-            deviceId: 'default-video-in',
-            groupId: 'default-group',
-            kind: 'videoinput',
-            label: 'Webcam (Default)',
-            toJSON: () => ({
-              deviceId: 'default-video-in',
-              groupId: 'default-group',
-              kind: 'videoinput',
-              label: 'Webcam (Default)',
-            }),
-          });
-        }
-
-        // Ensure at least one audio output (speaker) is always reported
-        if (!result.some((d) => d.kind === 'audiooutput')) {
-          result.push({
-            deviceId: 'default-audio-out',
-            groupId: 'default-group',
-            kind: 'audiooutput',
-            label: 'System Output (Default)',
-            toJSON: () => ({
-              deviceId: 'default-audio-out',
-              groupId: 'default-group',
-              kind: 'audiooutput',
-              label: 'System Output (Default)',
-            }),
-          });
-        }
-
         return result;
       };
     } catch (e) {
