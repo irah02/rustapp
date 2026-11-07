@@ -38,21 +38,126 @@
     console.warn('[RustApp] Could not override navigator.maxTouchPoints:', e);
   }
 
-  // Ensure WebRTC and getUserMedia legacy aliases are present
+  // Ensure WebRTC and getUserMedia legacy aliases are present and instrumented
   try {
-    if (window.RTCPeerConnection && !window.webkitRTCPeerConnection) {
+    if (window.RTCPeerConnection) {
+      const OrigPC = window.RTCPeerConnection;
+      window.RTCPeerConnection = function (config) {
+        console.log('[WebRTC] new RTCPeerConnection initialized with config:', JSON.stringify(config));
+        const pc = new OrigPC(config);
+        let hasRemoteDesc = false;
+        const pendingCandidates = [];
+
+        pc.addEventListener('icecandidate', (e) => {
+          if (e.candidate) {
+            console.log('[WebRTC] Local candidate generated:', e.candidate.candidate);
+          } else {
+            console.log('[WebRTC] Local candidate gathering complete');
+          }
+        });
+
+        pc.addEventListener('iceconnectionstatechange', () => {
+          console.log('[WebRTC] ICE connection state changed to:', pc.iceConnectionState);
+        });
+
+        pc.addEventListener('connectionstatechange', () => {
+          console.log('[WebRTC] Connection state changed to:', pc.connectionState);
+        });
+
+        pc.addEventListener('signalingstatechange', () => {
+          console.log('[WebRTC] Signaling state changed to:', pc.signalingState);
+        });
+
+        pc.addEventListener('icegatheringstatechange', () => {
+          console.log('[WebRTC] ICE gathering state changed to:', pc.iceGatheringState);
+        });
+
+        const origSetRemoteDesc = pc.setRemoteDescription.bind(pc);
+        pc.setRemoteDescription = async function (desc) {
+          console.log('[WebRTC] setRemoteDescription type=' + (desc && desc.type));
+          try {
+            const res = await origSetRemoteDesc(desc);
+            hasRemoteDesc = true;
+            console.log('[WebRTC] setRemoteDescription succeeded, flushing ' + pendingCandidates.length + ' queued candidates...');
+            while (pendingCandidates.length > 0) {
+              const cand = pendingCandidates.shift();
+              try {
+                await origAddIceCandidate(cand);
+                console.log('[WebRTC] Flushed candidate successfully');
+              } catch (flErr) {
+                console.warn('[WebRTC] Failed to add flushed candidate:', flErr);
+              }
+            }
+            return res;
+          } catch (err) {
+            console.error('[WebRTC] setRemoteDescription failed:', err);
+            throw err;
+          }
+        };
+
+        const origAddIceCandidate = pc.addIceCandidate.bind(pc);
+        pc.addIceCandidate = async function (candidate) {
+          if (!candidate) return origAddIceCandidate(candidate);
+          const candStr = candidate.candidate || candidate;
+          if (!hasRemoteDesc) {
+            console.log('[WebRTC] Queuing remote candidate (waiting for remoteDescription):', candStr);
+            pendingCandidates.push(candidate);
+            return Promise.resolve();
+          }
+          console.log('[WebRTC] Adding remote candidate directly:', candStr);
+          try {
+            return await origAddIceCandidate(candidate);
+          } catch (err) {
+            console.warn('[WebRTC] addIceCandidate failed (' + err.message + '), retrying after delay...');
+            return new Promise((resolve) => {
+              setTimeout(async () => {
+                try {
+                  const res = await origAddIceCandidate(candidate);
+                  console.log('[WebRTC] Delayed candidate add succeeded!');
+                  resolve(res);
+                } catch (retryErr) {
+                  console.warn('[WebRTC] Delayed candidate retry also failed:', retryErr);
+                  resolve();
+                }
+              }, 150);
+            });
+          }
+        };
+
+        return pc;
+      };
+      window.RTCPeerConnection.prototype = OrigPC.prototype;
       window.webkitRTCPeerConnection = window.RTCPeerConnection;
     }
+
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      if (!navigator.getUserMedia) {
-        navigator.getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-      }
-      if (!navigator.webkitGetUserMedia) {
-        navigator.webkitGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-      }
+      const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async function (constraints) {
+        console.log('[RustApp GUM] Requested constraints:', JSON.stringify(constraints));
+        try {
+          const stream = await origGUM(constraints);
+          console.log('[RustApp GUM] Stream acquired successfully with tracks:', stream.getTracks().map((t) => t.kind + ':' + t.label).join(', '));
+          return stream;
+        } catch (err) {
+          console.warn('[RustApp GUM] Initial getUserMedia failed (' + err.name + ': ' + err.message + '), trying relaxed constraints...');
+          const relaxed = {};
+          if (constraints && constraints.audio) relaxed.audio = true;
+          if (constraints && constraints.video) relaxed.video = true;
+          try {
+            const stream = await origGUM(relaxed);
+            console.log('[RustApp GUM] Relaxed stream acquired with tracks:', stream.getTracks().map((t) => t.kind).join(', '));
+            return stream;
+          } catch (err2) {
+            console.error('[RustApp GUM] Relaxed stream also failed:', err2);
+            throw err;
+          }
+        }
+      };
+      navigator.getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.webkitGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     }
   } catch (e) {
-    console.warn('[RustApp] Could not bind getUserMedia aliases:', e);
+    console.warn('[RustApp] Could not bind getUserMedia and RTCPeerConnection wrappers:', e);
   }
 
   // Ensure microphone and camera permissions always report as granted so WhatsApp doesn't display
