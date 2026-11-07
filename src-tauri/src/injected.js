@@ -38,97 +38,17 @@
     console.warn('[RustApp] Could not override navigator.maxTouchPoints:', e);
   }
 
-  // Ensure WebRTC and getUserMedia legacy aliases are present and instrumented
+  // Ensure WebRTC and legacy aliases are present
   try {
-    if (window.RTCPeerConnection) {
-      const OrigPC = window.RTCPeerConnection;
-      window.RTCPeerConnection = function (config) {
-        console.log('[WebRTC] new RTCPeerConnection initialized with config:', JSON.stringify(config));
-        const pc = new OrigPC(config);
-        let hasRemoteDesc = false;
-        const pendingCandidates = [];
-
-        pc.addEventListener('icecandidate', (e) => {
-          if (e.candidate) {
-            console.log('[WebRTC] Local candidate generated:', e.candidate.candidate);
-          } else {
-            console.log('[WebRTC] Local candidate gathering complete');
-          }
-        });
-
-        pc.addEventListener('iceconnectionstatechange', () => {
-          console.log('[WebRTC] ICE connection state changed to:', pc.iceConnectionState);
-        });
-
-        pc.addEventListener('connectionstatechange', () => {
-          console.log('[WebRTC] Connection state changed to:', pc.connectionState);
-        });
-
-        pc.addEventListener('signalingstatechange', () => {
-          console.log('[WebRTC] Signaling state changed to:', pc.signalingState);
-        });
-
-        pc.addEventListener('icegatheringstatechange', () => {
-          console.log('[WebRTC] ICE gathering state changed to:', pc.iceGatheringState);
-        });
-
-        const origSetRemoteDesc = pc.setRemoteDescription.bind(pc);
-        pc.setRemoteDescription = async function (desc) {
-          console.log('[WebRTC] setRemoteDescription type=' + (desc && desc.type));
-          try {
-            const res = await origSetRemoteDesc(desc);
-            hasRemoteDesc = true;
-            console.log('[WebRTC] setRemoteDescription succeeded, flushing ' + pendingCandidates.length + ' queued candidates...');
-            while (pendingCandidates.length > 0) {
-              const cand = pendingCandidates.shift();
-              try {
-                await origAddIceCandidate(cand);
-                console.log('[WebRTC] Flushed candidate successfully');
-              } catch (flErr) {
-                console.warn('[WebRTC] Failed to add flushed candidate:', flErr);
-              }
-            }
-            return res;
-          } catch (err) {
-            console.error('[WebRTC] setRemoteDescription failed:', err);
-            throw err;
-          }
-        };
-
-        const origAddIceCandidate = pc.addIceCandidate.bind(pc);
-        pc.addIceCandidate = async function (candidate) {
-          if (!candidate) return origAddIceCandidate(candidate);
-          const candStr = candidate.candidate || candidate;
-          if (!hasRemoteDesc) {
-            console.log('[WebRTC] Queuing remote candidate (waiting for remoteDescription):', candStr);
-            pendingCandidates.push(candidate);
-            return Promise.resolve();
-          }
-          console.log('[WebRTC] Adding remote candidate directly:', candStr);
-          try {
-            return await origAddIceCandidate(candidate);
-          } catch (err) {
-            console.warn('[WebRTC] addIceCandidate failed (' + err.message + '), retrying after delay...');
-            return new Promise((resolve) => {
-              setTimeout(async () => {
-                try {
-                  const res = await origAddIceCandidate(candidate);
-                  console.log('[WebRTC] Delayed candidate add succeeded!');
-                  resolve(res);
-                } catch (retryErr) {
-                  console.warn('[WebRTC] Delayed candidate retry also failed:', retryErr);
-                  resolve();
-                }
-              }, 150);
-            });
-          }
-        };
-
-        return pc;
-      };
-      window.RTCPeerConnection.prototype = OrigPC.prototype;
+    if (window.RTCPeerConnection && !window.webkitRTCPeerConnection) {
       window.webkitRTCPeerConnection = window.RTCPeerConnection;
     }
+    if (window.AudioContext && !window.webkitAudioContext) {
+      window.webkitAudioContext = window.AudioContext;
+    }
+  } catch (e) {
+    console.warn('[RustApp] Could not bind legacy WebRTC/Audio aliases:', e);
+  }
 
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
