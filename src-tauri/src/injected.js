@@ -6,49 +6,7 @@
 (function () {
   console.log('[RustApp] Companion script initialized');
 
-  // ==========================================
-  // DATA CHANNEL TRAFFIC HOOK (Claude Diagnostic)
-  // ==========================================
-  (function () {
-    if (!window.RTCPeerConnection) return;
-    const P = RTCPeerConnection.prototype;
-    const origCreate = P.createDataChannel;
-    if (!origCreate) return;
-    const channels = [];
 
-    const sizeOf = function (d) {
-      if (d == null) return 0;
-      return d.byteLength !== undefined ? d.byteLength : d.size !== undefined ? d.size : (d.length || 0);
-    };
-
-    P.createDataChannel = function (label, opts) {
-      const ch = origCreate.apply(this, arguments);
-      try {
-        const s = { label: label, rx: 0, rxBytes: 0, tx: 0, txBytes: 0, last: '' };
-        channels.push(s);
-        console.log('[DCDBG] createDataChannel label=' + label + ' opts=' + JSON.stringify(opts || {}));
-        ch.addEventListener('open', function () { console.log('[DCDBG] open ' + label); });
-        ch.addEventListener('close', function () { console.log('[DCDBG] close ' + label); });
-        ch.addEventListener('error', function () { console.log('[DCDBG] error ' + label); });
-        ch.addEventListener('message', function (e) { s.rx++; s.rxBytes += sizeOf(e.data); });
-        const origSend = ch.send.bind(ch);
-        ch.send = function (d) { s.tx++; s.txBytes += sizeOf(d); return origSend(d); };
-      } catch (e) {
-        console.log('[DCDBG] hook failed: ' + e);
-      }
-      return ch;
-    };
-
-    setInterval(function () {
-      channels.forEach(function (s) {
-        const line = 'rx=' + s.rx + '/' + s.rxBytes + 'B tx=' + s.tx + '/' + s.txBytes + 'B';
-        if (line !== s.last) {
-          s.last = line;
-          console.log('[DCDBG] ' + s.label + ' ' + line);
-        }
-      });
-    }, 2000);
-  })();
 
 
 
@@ -82,16 +40,6 @@
     });
   } catch (e) {
     console.warn('[RustApp] Could not override navigator.maxTouchPoints:', e);
-  }
-
-  // Pre-configure Emscripten Module thread pool for VoIP video decoding
-  try {
-    window.Module = window.Module || {};
-    if (typeof window.Module.pthreadPoolSizeOverride !== 'number') {
-      window.Module.pthreadPoolSizeOverride = 24;
-    }
-  } catch (e) {
-    console.warn('[RustApp] Could not configure Module.pthreadPoolSizeOverride:', e);
   }
 
   // Ensure WebRTC and legacy aliases are present, and patch GStreamer webrtcbin quirks
@@ -167,7 +115,11 @@
       const origConnect = AudioNode.prototype.connect;
       AudioNode.prototype.connect = function (dest) {
         if (dest && typeof MediaStreamAudioDestinationNode !== 'undefined' && dest instanceof MediaStreamAudioDestinationNode) {
-          console.log('[RustApp Audio] Bridging AudioNode directly to AudioContext.destination');
+          // Narrow specifically to AudioWorkletNode to avoid echoing microphone input
+          if (typeof AudioWorkletNode !== 'undefined' && !(this instanceof AudioWorkletNode)) {
+            return origConnect.apply(this, arguments);
+          }
+          console.log('[RustApp Audio] Bridging AudioWorkletNode directly to AudioContext.destination');
           try {
             if (this.context && this.context.state === 'suspended') {
               this.context.resume().catch(() => {});
@@ -180,17 +132,6 @@
         return origConnect.apply(this, arguments);
       };
     }
-
-    // Ensure all <audio> playback elements are unmuted, at full volume, and playing
-    setInterval(function () {
-      document.querySelectorAll('audio').forEach(function (a) {
-        if (a.muted) a.muted = false;
-        if (a.volume < 1) a.volume = 1;
-        if (a.paused && a.srcObject) {
-          a.play().catch(function () {});
-        }
-      });
-    }, 500);
   } catch (e) {
     console.warn('[RustApp] Could not bind legacy WebRTC/Audio aliases:', e);
   }
