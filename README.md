@@ -55,6 +55,17 @@ A blazing-fast, lightweight (~8 MB binary, ~70 MB RAM) native desktop client for
 
 ## Development & Building
 
+### Prerequisites for WhatsApp Calling (Linux)
+1. **WebKitGTK 4.1 compiled with WebRTC**:
+   Ensure `webkit2gtk-4.1` is installed with `-DENABLE_WEB_RTC=ON`, `-DENABLE_MEDIA_STREAM=ON`, and `-DUSE_GSTREAMER_WEBRTC=ON`.
+2. **GStreamer WebRTC ICE Patch**:
+   WhatsApp Web uses Base64 encoded ICE credentials ending in `=` / `==`, which strict RFC 5245 validation in GStreamer rejects. Apply the local user plugin patch with:
+   ```bash
+   python3 scripts/patch-gst-webrtc.py
+   ```
+   This creates a patched `libgstwebrtc.so` in `~/.local/lib/gstreamer-1.0` that RustApp prioritizes automatically.
+
+### Building
 To run in development mode:
 ```bash
 cd ~/Projects/rustapp

@@ -146,11 +146,15 @@ pub fn run() {
                 let _ = window.with_webview(move |webview| {
                     let wv = webview.inner();
 
-                    // Enable WebRTC, MediaStreams, and MediaSource for Calls and Video Calls
+                    // Enable WebRTC, MediaStreams, WebGL, and MediaSource for Calls and Video Calls
                     if let Some(settings) = wv.settings() {
                         settings.set_enable_webrtc(true);
                         settings.set_enable_media_stream(true);
                         settings.set_enable_mediasource(true);
+                        settings.set_enable_webgl(true);
+                        settings.set_enable_encrypted_media(true);
+                        settings.set_enable_media_capabilities(true);
+                        settings.set_hardware_acceleration_policy(webkit2gtk::HardwareAccelerationPolicy::Always);
                         settings.set_media_playback_requires_user_gesture(false);
                         settings.set_enable_developer_extras(true);
                         settings.set_enable_write_console_messages_to_stdout(true);

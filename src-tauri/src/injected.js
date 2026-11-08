@@ -21,6 +21,15 @@
   }
 
   try {
+    Object.defineProperty(navigator, 'hardwareConcurrency', {
+      get: () => 16,
+      configurable: true,
+    });
+  } catch (e) {
+    console.warn('[RustApp] Could not override navigator.hardwareConcurrency:', e);
+  }
+
+  try {
     Object.defineProperty(navigator, 'vendor', {
       get: () => 'Apple Computer, Inc.',
       configurable: true,
@@ -38,61 +47,14 @@
     console.warn('[RustApp] Could not override navigator.maxTouchPoints:', e);
   }
 
-  // Helper to fix session-level ice-ufrag/ice-pwd for GStreamer webrtcbin
-  function fixSdpIceCredentials(sdp) {
-    if (!sdp || typeof sdp !== 'string') return sdp;
-    const firstMIndex = sdp.indexOf('m=');
-    if (firstMIndex === -1) return sdp;
-
-    const sessionPart = sdp.slice(0, firstMIndex);
-    let ufragMatch = sessionPart.match(/^a=ice-ufrag:(.+)$/m);
-    let pwdMatch = sessionPart.match(/^a=ice-pwd:(.+)$/m);
-
-    const globalUfrag = ufragMatch ? ufragMatch[1].trim() : null;
-    const globalPwd = pwdMatch ? pwdMatch[1].trim() : null;
-
-    if (!globalUfrag && !globalPwd) return sdp;
-
-    const lines = sdp.split(/\r\n|\n/);
-    const newLines = [];
-    let inMedia = false;
-    let hasUfrag = false;
-    let hasPwd = false;
-    let insertIdx = -1;
-
-    function inject() {
-      if (inMedia) {
-        if (!hasUfrag && globalUfrag) {
-          newLines.splice(insertIdx, 0, 'a=ice-ufrag:' + globalUfrag);
-          insertIdx++;
-        }
-        if (!hasPwd && globalPwd) {
-          newLines.splice(insertIdx, 0, 'a=ice-pwd:' + globalPwd);
-          insertIdx++;
-        }
-      }
+  // Pre-configure Emscripten Module thread pool for VoIP video decoding
+  try {
+    window.Module = window.Module || {};
+    if (typeof window.Module.pthreadPoolSizeOverride !== 'number') {
+      window.Module.pthreadPoolSizeOverride = 40;
     }
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.startsWith('m=')) {
-        inject();
-        inMedia = true;
-        hasUfrag = false;
-        hasPwd = false;
-        newLines.push(line);
-        insertIdx = newLines.length;
-        continue;
-      }
-      if (inMedia) {
-        if (line.startsWith('a=ice-ufrag:')) hasUfrag = true;
-        if (line.startsWith('a=ice-pwd:')) hasPwd = true;
-        if (line.startsWith('c=')) insertIdx = newLines.length + 1;
-      }
-      newLines.push(line);
-    }
-    inject();
-    return newLines.join('\r\n');
+  } catch (e) {
+    console.warn('[RustApp] Could not configure Module.pthreadPoolSizeOverride:', e);
   }
 
   // Ensure WebRTC and legacy aliases are present, and patch GStreamer webrtcbin quirks
@@ -113,27 +75,6 @@
       try {
         Object.defineProperty(PCProxy, 'name', { value: 'RTCPeerConnection' });
       } catch (_) {}
-
-      // Patch setRemoteDescription to inject missing media-level ice-ufrag / ice-pwd
-      const origSetRemoteDesc = NativePC.prototype.setRemoteDescription;
-      NativePC.prototype.setRemoteDescription = function (desc) {
-        if (desc && desc.sdp) {
-          try {
-            const fixedSdp = fixSdpIceCredentials(desc.sdp);
-            if (fixedSdp !== desc.sdp) {
-              console.log('[RustApp WebRTC] Injected media-level ice-ufrag/pwd into remote SDP');
-              if (typeof RTCSessionDescription !== 'undefined') {
-                desc = new RTCSessionDescription({ type: desc.type, sdp: fixedSdp });
-              } else {
-                desc = { type: desc.type, sdp: fixedSdp };
-              }
-            }
-          } catch (e) {
-            console.warn('[RustApp WebRTC] Error fixing SDP credentials:', e);
-          }
-        }
-        return origSetRemoteDesc.call(this, desc);
-      };
 
       // Patch addIceCandidate to ensure sdpMLineIndex is populated if sdpMid is present
       const origAddIceCandidate = NativePC.prototype.addIceCandidate;
