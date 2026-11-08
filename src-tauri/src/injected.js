@@ -7,6 +7,132 @@
   console.log('[RustApp] Companion script initialized');
 
   // ==========================================
+  // DATA CHANNEL TRAFFIC HOOK (Claude Diagnostic)
+  // ==========================================
+  (function () {
+    if (!window.RTCPeerConnection) return;
+    const P = RTCPeerConnection.prototype;
+    const origCreate = P.createDataChannel;
+    if (!origCreate) return;
+    const channels = [];
+
+    const sizeOf = function (d) {
+      if (d == null) return 0;
+      return d.byteLength !== undefined ? d.byteLength : d.size !== undefined ? d.size : (d.length || 0);
+    };
+
+    P.createDataChannel = function (label, opts) {
+      const ch = origCreate.apply(this, arguments);
+      try {
+        const s = { label: label, rx: 0, rxBytes: 0, tx: 0, txBytes: 0, last: '' };
+        channels.push(s);
+        console.log('[DCDBG] createDataChannel label=' + label + ' opts=' + JSON.stringify(opts || {}));
+        ch.addEventListener('open', function () { console.log('[DCDBG] open ' + label); });
+        ch.addEventListener('close', function () { console.log('[DCDBG] close ' + label); });
+        ch.addEventListener('error', function () { console.log('[DCDBG] error ' + label); });
+        ch.addEventListener('message', function (e) { s.rx++; s.rxBytes += sizeOf(e.data); });
+        const origSend = ch.send.bind(ch);
+        ch.send = function (d) { s.tx++; s.txBytes += sizeOf(d); return origSend(d); };
+      } catch (e) {
+        console.log('[DCDBG] hook failed: ' + e);
+      }
+      return ch;
+    };
+
+    setInterval(function () {
+      channels.forEach(function (s) {
+        const line = 'rx=' + s.rx + '/' + s.rxBytes + 'B tx=' + s.tx + '/' + s.txBytes + 'B';
+        if (line !== s.last) {
+          s.last = line;
+          console.log('[DCDBG] ' + s.label + ' ' + line);
+        }
+      });
+    }, 2000);
+  })();
+
+  // ==========================================
+  // CAPTURE DIAGNOSTIC & FIX (Claude Diagnostic)
+  // ==========================================
+  (function () {
+    const CFG = {
+      fixStyle: true,      // make the hidden capture <video> actually paint and play
+      canvasFrames: false, // build VideoFrames from a canvas copy instead of the <video>
+    };
+    const log = function () { console.log.apply(console, ['[CAPDBG]'].concat([].slice.call(arguments))); };
+    const counts = { rvfc: 0, vfOk: 0, vfErr: 0, vfCanvas: 0 };
+
+    // 1. Count requestVideoFrameCallback firings.
+    const origRvfc = HTMLVideoElement.prototype.requestVideoFrameCallback;
+    if (origRvfc) {
+      HTMLVideoElement.prototype.requestVideoFrameCallback = function (cb) {
+        return origRvfc.call(this, function (now, meta) { counts.rvfc++; return cb(now, meta); });
+      };
+    }
+
+    // 2. Wrap VideoFrame construction (main thread only; workers are not covered).
+    if (window.VideoFrame) {
+      const OrigVF = window.VideoFrame;
+      let canvas = null, ctx = null, firstLogged = false;
+      window.VideoFrame = new Proxy(OrigVF, {
+        construct: function (target, args, newTarget) {
+          try {
+            let a = args;
+            const src = args[0];
+            if (CFG.canvasFrames && src instanceof HTMLVideoElement && src.videoWidth > 0) {
+              if (!canvas) { canvas = document.createElement('canvas'); ctx = canvas.getContext('2d'); }
+              if (canvas.width !== src.videoWidth || canvas.height !== src.videoHeight) {
+                canvas.width = src.videoWidth; canvas.height = src.videoHeight;
+              }
+              ctx.drawImage(src, 0, 0);
+              const init = Object.assign({ timestamp: Math.round(performance.now() * 1000) }, args[1] || {});
+              a = [canvas, init];
+              counts.vfCanvas++;
+            }
+            const vf = Reflect.construct(target, a, newTarget);
+            counts.vfOk++;
+            if (!firstLogged) {
+              firstLogged = true;
+              log('first VideoFrame ok', vf.codedWidth + 'x' + vf.codedHeight, 'format=' + vf.format);
+            }
+            return vf;
+          } catch (e) {
+            counts.vfErr++;
+            if (counts.vfErr <= 3) log('VideoFrame construct failed:', e && e.message);
+            throw e;
+          }
+        },
+      });
+    }
+
+    // 3. Inspect (and optionally fix) <video> elements fed by a MediaStream.
+    setInterval(function () {
+      document.querySelectorAll('video').forEach(function (v) {
+        if (!v.srcObject) return;
+        if (CFG.fixStyle && (v.style.opacity == 0 || v.style.width === '1px' || v.style.height === '1px')) {
+          v.style.cssText = 'position:fixed;bottom:0;right:0;width:160px;height:90px;opacity:0.01;pointer-events:none;z-index:-1;';
+          v.muted = true;
+          v.playsInline = true;
+          if (v.paused) { v.play().catch(function (e) { log('play() failed:', e && e.message); }); }
+          log('applied fixStyle to a capture <video>');
+        }
+        const key = [v.readyState, v.videoWidth + 'x' + v.videoHeight, v.paused].join('|');
+        if (v.__capKey !== key) {
+          v.__capKey = key;
+          log('video state: readyState=' + v.readyState + ' size=' + v.videoWidth + 'x' + v.videoHeight +
+              ' paused=' + v.paused + ' style=' + JSON.stringify(v.style.cssText.slice(0, 60)));
+        }
+      });
+    }, 500);
+
+    // 4. Periodic summary, only when something changed.
+    let last = '';
+    setInterval(function () {
+      const s = JSON.stringify(counts);
+      if (s !== last) { last = s; log('counts ' + s); }
+    }, 2000);
+  })();
+
+  // ==========================================
   // 1. CALLING & ENVIRONMENT COMPATIBILITY
   // ==========================================
   // WhatsApp checks navigator.platform and navigator.vendor to verify desktop calling support.
@@ -48,82 +174,148 @@
     console.warn('[RustApp] Could not configure Module.pthreadPoolSizeOverride:', e);
   }
 
-  // Prevent WebKitGTK from throttling hidden video elements used for webcam encoding
-  try {
-    const origSrcObjectDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
-    if (origSrcObjectDesc && origSrcObjectDesc.set) {
-      const origSet = origSrcObjectDesc.set;
-      Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
-        set(stream) {
-          const res = origSet.call(this, stream);
-          if (this instanceof HTMLVideoElement && stream && stream.getVideoTracks && stream.getVideoTracks().length > 0) {
-            setTimeout(() => {
-              try {
-                if (this.style.opacity === '0' || this.style.width === '1px') {
-                  this.style.width = '320px';
-                  this.style.height = '240px';
-                  this.style.opacity = '0.001';
-                  this.style.position = 'fixed';
-                  this.style.bottom = '0';
-                  this.style.right = '0';
-                  this.style.zIndex = '-9999';
-                  this.style.pointerEvents = 'none';
-                }
-                if (this.paused) {
-                  this.play().catch(() => {});
-                }
-              } catch (_) {}
-            }, 50);
-          }
-          return res;
-        },
-        get: origSrcObjectDesc.get,
-        configurable: true,
-      });
-    }
-  } catch (e) {
-    console.warn('[RustApp] Could not wrap srcObject:', e);
-  }
-
-  // Ensure requestVideoFrameCallback reliably fires even if WebKit throttles invisible capture video
-  try {
-    if (HTMLVideoElement.prototype.requestVideoFrameCallback) {
-      const origRVFC = HTMLVideoElement.prototype.requestVideoFrameCallback;
-      HTMLVideoElement.prototype.requestVideoFrameCallback = function (cb) {
-        let fired = false;
-        let fallbackTimer = null;
-        const wrapped = (now, metadata) => {
-          if (!fired) {
-            fired = true;
-            if (fallbackTimer) clearTimeout(fallbackTimer);
-            cb(now, metadata || { presentationTime: performance.now(), captureTime: performance.now() });
-          }
-        };
-        fallbackTimer = setTimeout(() => {
-          if (!fired) {
-            fired = true;
-            cb(performance.now(), { presentationTime: performance.now(), captureTime: performance.now() });
-          }
-        }, 45);
-        return origRVFC.call(this, wrapped);
-      };
-    }
-  } catch (e) {
-    console.warn('[RustApp] Could not wrap requestVideoFrameCallback:', e);
-  }
-
-  // Ensure WebRTC and legacy aliases are present, and patch GStreamer webrtcbin quirks
+  // ==========================================
+  // WEBRTC COMPATIBILITY & STATE MACHINE FIX
+  // ==========================================
+  // Gives RTCPeerConnection working connectionState / iceConnectionState when
+  // WebKitGTK's GStreamer backend leaves them at "new", driven by real
+  // SCTP data channel state. Also enforces max-bundle and stops getUserMedia
+  // tracks when the last peer connection closes.
   try {
     if (window.RTCPeerConnection) {
       const NativePC = window.RTCPeerConnection;
+      const log = function () { console.log.apply(console, ['[RTCSTATE]'].concat([].slice.call(arguments))); };
+      const nativeConn = Object.getOwnPropertyDescriptor(NativePC.prototype, 'connectionState');
+      const nativeIce = Object.getOwnPropertyDescriptor(NativePC.prototype, 'iceConnectionState');
 
-      // Force bundlePolicy: 'max-bundle' because GStreamer webrtcbin only implements max-bundle
+      const streams = new Set();
+      let openPCs = 0;
+
+      // Track active media streams to cleanly tear down on hangup
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia = async function (constraints) {
+          console.log('[RustApp GUM] Requested constraints:', JSON.stringify(constraints));
+          try {
+            const stream = await origGUM(constraints);
+            streams.add(stream);
+            console.log('[RustApp GUM] Stream acquired successfully with tracks:', stream.getTracks().map((t) => t.kind + ':' + t.label).join(', '));
+            return stream;
+          } catch (err) {
+            console.warn('[RustApp GUM] Initial getUserMedia failed (' + err.name + ': ' + err.message + '), trying relaxed constraints...');
+            const relaxed = {};
+            if (constraints && constraints.audio) relaxed.audio = true;
+            if (constraints && constraints.video) relaxed.video = true;
+            try {
+              const stream = await origGUM(relaxed);
+              streams.add(stream);
+              console.log('[RustApp GUM] Relaxed stream acquired with tracks:', stream.getTracks().map((t) => t.kind).join(', '));
+              return stream;
+            } catch (err2) {
+              console.error('[RustApp GUM] Relaxed stream also failed:', err2);
+              throw err;
+            }
+          }
+        };
+        navigator.getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.webkitGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      }
+
+      function patchPC(pc) {
+        let ice = 'new', conn = 'new', closed = false;
+        const openChannels = new Set();
+
+        function set(newIce, newConn) {
+          if (closed) return;
+          if (newIce && newIce !== ice) {
+            ice = newIce;
+            log('iceConnectionState ->', ice);
+            pc.dispatchEvent(new Event('iceconnectionstatechange'));
+          }
+          if (newConn && newConn !== conn) {
+            conn = newConn;
+            log('connectionState ->', conn);
+            pc.dispatchEvent(new Event('connectionstatechange'));
+          }
+        }
+
+        Object.defineProperty(pc, 'iceConnectionState', { get: function () { return ice; }, configurable: true });
+        Object.defineProperty(pc, 'connectionState', { get: function () { return conn; }, configurable: true });
+
+        function watch(ch) {
+          ch.addEventListener('open', function () {
+            openChannels.add(ch);
+            set('connected', 'connected');
+          });
+          ch.addEventListener('close', function () {
+            openChannels.delete(ch);
+            if (!closed && openChannels.size === 0) set('disconnected', 'disconnected');
+          });
+          if (ch.readyState === 'open') {
+            openChannels.add(ch);
+            set('connected', 'connected');
+          }
+        }
+
+        const origCDC = pc.createDataChannel;
+        pc.createDataChannel = function () {
+          const ch = origCDC.apply(pc, arguments);
+          watch(ch);
+          return ch;
+        };
+        pc.addEventListener('datachannel', function (e) { watch(e.channel); });
+
+        const origSRD = pc.setRemoteDescription;
+        pc.setRemoteDescription = function () {
+          const r = origSRD.apply(pc, arguments);
+          if (r && typeof r.then === 'function') {
+            r.then(function () { if (conn === 'new') set('checking', 'connecting'); }, function () {});
+          }
+          return r;
+        };
+
+        const origClose = pc.close;
+        pc.close = function () {
+          if (!closed) {
+            closed = true;
+            ice = 'closed';
+            conn = 'closed';
+            log('closed');
+            openPCs--;
+            if (openPCs <= 0) {
+              openPCs = 0;
+              streams.forEach(function (s) {
+                s.getTracks().forEach(function (t) { try { t.stop(); } catch (_) {} });
+              });
+              streams.clear();
+              log('stopped getUserMedia tracks');
+            }
+          }
+          return origClose.apply(pc, arguments);
+        };
+
+        // Compare native vs spoofed state, only when something changes.
+        let last = '';
+        const timer = setInterval(function () {
+          if (closed) { clearInterval(timer); return; }
+          try {
+            const n = (nativeConn ? nativeConn.get.call(pc) : '?') + '/' + (nativeIce ? nativeIce.get.call(pc) : '?');
+            const line = 'native=' + n + ' spoofed=' + conn + '/' + ice;
+            if (line !== last) { last = line; log(line); }
+          } catch (_) {}
+        }, 2000);
+      }
+
+      // Proxy ensures bundlePolicy: 'max-bundle' and patches each PC instance
       const PCProxy = new Proxy(NativePC, {
         construct(target, args, newTarget) {
           const config = args[0] ? Object.assign({}, args[0]) : {};
           config.bundlePolicy = 'max-bundle';
           args[0] = config;
-          return Reflect.construct(target, args, newTarget);
+          const pc = Reflect.construct(target, args, newTarget);
+          openPCs++;
+          patchPC(pc);
+          return pc;
         },
       });
       PCProxy.prototype = NativePC.prototype;
@@ -161,37 +353,6 @@
     }
   } catch (e) {
     console.warn('[RustApp] Could not bind legacy WebRTC/Audio aliases:', e);
-  }
-
-  try {
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-      navigator.mediaDevices.getUserMedia = async function (constraints) {
-        console.log('[RustApp GUM] Requested constraints:', JSON.stringify(constraints));
-        try {
-          const stream = await origGUM(constraints);
-          console.log('[RustApp GUM] Stream acquired successfully with tracks:', stream.getTracks().map((t) => t.kind + ':' + t.label).join(', '));
-          return stream;
-        } catch (err) {
-          console.warn('[RustApp GUM] Initial getUserMedia failed (' + err.name + ': ' + err.message + '), trying relaxed constraints...');
-          const relaxed = {};
-          if (constraints && constraints.audio) relaxed.audio = true;
-          if (constraints && constraints.video) relaxed.video = true;
-          try {
-            const stream = await origGUM(relaxed);
-            console.log('[RustApp GUM] Relaxed stream acquired with tracks:', stream.getTracks().map((t) => t.kind).join(', '));
-            return stream;
-          } catch (err2) {
-            console.error('[RustApp GUM] Relaxed stream also failed:', err2);
-            throw err;
-          }
-        }
-      };
-      navigator.getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-      navigator.webkitGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-    }
-  } catch (e) {
-    console.warn('[RustApp] Could not bind getUserMedia and RTCPeerConnection wrappers:', e);
   }
 
   // Ensure microphone and camera permissions always report as granted so WhatsApp doesn't display
