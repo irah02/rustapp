@@ -124,6 +124,18 @@
       });
     }, 500);
 
+    // 3b. Inspect <canvas> elements (used for incoming remote video rendering)
+    setInterval(function () {
+      document.querySelectorAll('canvas').forEach(function (c) {
+        const key = [c.width + 'x' + c.height, c.offsetWidth + 'x' + c.offsetHeight, c.style.display, c.style.visibility].join('|');
+        if (c.__capKey !== key) {
+          c.__capKey = key;
+          log('canvas state: buffer=' + c.width + 'x' + c.height + ' layout=' + c.offsetWidth + 'x' + c.offsetHeight +
+              ' class=' + JSON.stringify(c.className) + ' style=' + JSON.stringify(c.style.cssText.slice(0, 60)));
+        }
+      });
+    }, 1000);
+
     // 4. Periodic summary, only when something changed.
     let last = '';
     setInterval(function () {
@@ -172,70 +184,6 @@
     }
   } catch (e) {
     console.warn('[RustApp] Could not configure Module.pthreadPoolSizeOverride:', e);
-  }
-
-  // Prevent WebKitGTK from throttling hidden video elements used for webcam encoding
-  try {
-    const origSrcObjectDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
-    if (origSrcObjectDesc && origSrcObjectDesc.set) {
-      const origSet = origSrcObjectDesc.set;
-      Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
-        set(stream) {
-          const res = origSet.call(this, stream);
-          if (this instanceof HTMLVideoElement && stream && stream.getVideoTracks && stream.getVideoTracks().length > 0) {
-            setTimeout(() => {
-              try {
-                if (this.style.opacity === '0' || this.style.width === '1px') {
-                  this.style.width = '320px';
-                  this.style.height = '240px';
-                  this.style.opacity = '0.001';
-                  this.style.position = 'fixed';
-                  this.style.bottom = '0';
-                  this.style.right = '0';
-                  this.style.zIndex = '-9999';
-                  this.style.pointerEvents = 'none';
-                }
-                if (this.paused) {
-                  this.play().catch(() => {});
-                }
-              } catch (_) {}
-            }, 50);
-          }
-          return res;
-        },
-        get: origSrcObjectDesc.get,
-        configurable: true,
-      });
-    }
-  } catch (e) {
-    console.warn('[RustApp] Could not wrap srcObject:', e);
-  }
-
-  // Ensure requestVideoFrameCallback reliably fires even if WebKit throttles invisible capture video
-  try {
-    if (HTMLVideoElement.prototype.requestVideoFrameCallback) {
-      const origRVFC = HTMLVideoElement.prototype.requestVideoFrameCallback;
-      HTMLVideoElement.prototype.requestVideoFrameCallback = function (cb) {
-        let fired = false;
-        let fallbackTimer = null;
-        const wrapped = (now, metadata) => {
-          if (!fired) {
-            fired = true;
-            if (fallbackTimer) clearTimeout(fallbackTimer);
-            cb(now, metadata || { presentationTime: performance.now(), captureTime: performance.now() });
-          }
-        };
-        fallbackTimer = setTimeout(() => {
-          if (!fired) {
-            fired = true;
-            cb(performance.now(), { presentationTime: performance.now(), captureTime: performance.now() });
-          }
-        }, 45);
-        return origRVFC.call(this, wrapped);
-      };
-    }
-  } catch (e) {
-    console.warn('[RustApp] Could not wrap requestVideoFrameCallback:', e);
   }
 
   // Ensure WebRTC and legacy aliases are present, and patch GStreamer webrtcbin quirks
