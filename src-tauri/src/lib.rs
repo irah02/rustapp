@@ -86,6 +86,18 @@ pub fn run() {
 
             let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[0])?
                 .initialization_script(INJECTED_SCRIPT)
+                .on_new_window(|url, _features| {
+                    let is_whatsapp = url.host_str() == Some("web.whatsapp.com")
+                        || url.as_str() == "about:blank"
+                        || url.scheme() == "about";
+
+                    if is_whatsapp {
+                        tauri::webview::NewWindowResponse::Allow
+                    } else {
+                        let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                        tauri::webview::NewWindowResponse::Deny
+                    }
+                })
                 .build()?;
 
             #[cfg(target_os = "linux")]
@@ -112,6 +124,7 @@ pub fn run() {
                         settings.set_media_playback_requires_user_gesture(false);
                         settings.set_enable_developer_extras(true);
                         settings.set_enable_write_console_messages_to_stdout(is_debug);
+                        settings.set_javascript_can_open_windows_automatically(true);
                         settings.set_enable_smooth_scrolling(true);
                         settings.set_enable_dns_prefetching(true);
                         settings.set_enable_back_forward_navigation_gestures(false);
