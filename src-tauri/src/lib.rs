@@ -100,6 +100,8 @@ pub fn run() {
 
                     // Enable WebRTC, MediaStreams, WebGL, and MediaSource for Calls and Video Calls
                     if let Some(settings) = wv.settings() {
+                        let is_debug = cfg!(debug_assertions) || std::env::var("RUSTAPP_DEBUG").is_ok();
+
                         settings.set_enable_webrtc(true);
                         settings.set_enable_media_stream(true);
                         settings.set_enable_mediasource(true);
@@ -109,7 +111,10 @@ pub fn run() {
                         settings.set_hardware_acceleration_policy(webkit2gtk::HardwareAccelerationPolicy::Always);
                         settings.set_media_playback_requires_user_gesture(false);
                         settings.set_enable_developer_extras(true);
-                        settings.set_enable_write_console_messages_to_stdout(true);
+                        settings.set_enable_write_console_messages_to_stdout(is_debug);
+                        settings.set_enable_smooth_scrolling(true);
+                        settings.set_enable_dns_prefetching(true);
+                        settings.set_enable_back_forward_navigation_gestures(false);
                         settings.set_user_agent(Some("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"));
                     }
 

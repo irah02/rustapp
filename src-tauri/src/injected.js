@@ -596,6 +596,8 @@
   // ==========================================
   // 3. MEDIA PERMISSIONS PROMPT & REQUESTER
   // ==========================================
+  let permInterval = null;
+
   async function requestRustAppMediaPermissions() {
     console.log('[RustApp] Requesting microphone & camera permissions via getUserMedia...');
     let stream = null;
@@ -619,6 +621,10 @@
       tracks.forEach((track) => track.stop());
       try {
         localStorage.setItem('wa_rustapp_media_granted', 'true');
+        if (permInterval) {
+          clearInterval(permInterval);
+          permInterval = null;
+        }
       } catch (_) {}
       if (navigator.mediaDevices && navigator.mediaDevices.dispatchEvent) {
         navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
@@ -769,9 +775,21 @@
     }
   });
 
-  setInterval(() => {
-    if (localStorage.getItem('wa_rustapp_media_granted') !== 'true' && !document.getElementById('rustapp-perm-banner')) {
+  // Only poll for permission setup until granted, then cancel timer completely to avoid idle wake-ups
+  function checkPermBanner() {
+    if (localStorage.getItem('wa_rustapp_media_granted') === 'true') {
+      if (permInterval) {
+        clearInterval(permInterval);
+        permInterval = null;
+      }
+      return;
+    }
+    if (!document.getElementById('rustapp-perm-banner')) {
       showPermissionBanner();
     }
-  }, 2500);
+  }
+
+  if (localStorage.getItem('wa_rustapp_media_granted') !== 'true') {
+    permInterval = setInterval(checkPermBanner, 2500);
+  }
 })();
