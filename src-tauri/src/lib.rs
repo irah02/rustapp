@@ -53,7 +53,22 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .tooltip("RustApp (WhatsApp)")
                 .on_menu_event(|app, event| {
-                    match event.id.as_ref() {
+                    let id = event.id.as_ref();
+                    if let Some(theme) = id.strip_prefix("th_") {
+                        let theme_key = match theme {
+                            "catppuccin" => "catppuccin-mocha",
+                            "gruvbox" => "gruvbox-dark",
+                            "monochrome" => "monochrome-oled",
+                            "nord" => "nord",
+                            _ => "default",
+                        };
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.eval(&format!("if (window.applyTheme) window.applyTheme('{theme_key}')"));
+                        }
+                        return;
+                    }
+
+                    match id {
                         "show" => {
                             if let Some(win) = app.get_webview_window("main") {
                                 if win.is_visible().unwrap_or(false) {
@@ -73,31 +88,6 @@ pub fn run() {
                         "grant_perm" => {
                             if let Some(win) = app.get_webview_window("main") {
                                 let _ = win.eval("if (window.requestRustAppMediaPermissions) window.requestRustAppMediaPermissions();");
-                            }
-                        }
-                        "th_catppuccin" => {
-                            if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.eval("if (window.applyTheme) window.applyTheme('catppuccin-mocha')");
-                            }
-                        }
-                        "th_gruvbox" => {
-                            if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.eval("if (window.applyTheme) window.applyTheme('gruvbox-dark')");
-                            }
-                        }
-                        "th_monochrome" => {
-                            if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.eval("if (window.applyTheme) window.applyTheme('monochrome-oled')");
-                            }
-                        }
-                        "th_nord" => {
-                            if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.eval("if (window.applyTheme) window.applyTheme('nord')");
-                            }
-                        }
-                        "th_default" => {
-                            if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.eval("if (window.applyTheme) window.applyTheme('default')");
                             }
                         }
                         "quit" => {
