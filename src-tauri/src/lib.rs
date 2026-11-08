@@ -4,35 +4,14 @@ const INJECTED_SCRIPT: &str = include_str!("injected.js");
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+            use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
             use tauri::Manager;
 
             let show_item = MenuItem::with_id(app, "show", "Show / Hide", true, None::<&str>)?;
             let reload_item = MenuItem::with_id(app, "reload", "Reload", true, None::<&str>)?;
-
-            let th_catppuccin = MenuItem::with_id(app, "th_catppuccin", "☕ Catppuccin Mocha", true, None::<&str>)?;
-            let th_gruvbox = MenuItem::with_id(app, "th_gruvbox", "🌲 Gruvbox Dark", true, None::<&str>)?;
-            let th_monochrome = MenuItem::with_id(app, "th_monochrome", "🖤 Monochrome OLED (Uber)", true, None::<&str>)?;
-            let th_nord = MenuItem::with_id(app, "th_nord", "❄️ Nord Night", true, None::<&str>)?;
-            let th_default = MenuItem::with_id(app, "th_default", "💬 Default WhatsApp", true, None::<&str>)?;
-
-            let theme_sub = Submenu::with_items(
-                app,
-                "Themes",
-                true,
-                &[
-                    &th_catppuccin,
-                    &th_gruvbox,
-                    &th_monochrome,
-                    &th_nord,
-                    &th_default,
-                ],
-            )?;
-
-            let sep1 = PredefinedMenuItem::separator(app)?;
-            let sep2 = PredefinedMenuItem::separator(app)?;
             let grant_perm_item = MenuItem::with_id(app, "grant_perm", "🎙️ Approve Call Permissions", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit RustApp", true, None::<&str>)?;
 
             let menu = Menu::with_items(
@@ -41,9 +20,7 @@ pub fn run() {
                     &show_item,
                     &reload_item,
                     &grant_perm_item,
-                    &sep1,
-                    &theme_sub,
-                    &sep2,
+                    &sep,
                     &quit_item,
                 ],
             )?;
@@ -53,22 +30,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .tooltip("RustApp (WhatsApp)")
                 .on_menu_event(|app, event| {
-                    let id = event.id.as_ref();
-                    if let Some(theme) = id.strip_prefix("th_") {
-                        let theme_key = match theme {
-                            "catppuccin" => "catppuccin-mocha",
-                            "gruvbox" => "gruvbox-dark",
-                            "monochrome" => "monochrome-oled",
-                            "nord" => "nord",
-                            _ => "default",
-                        };
-                        if let Some(win) = app.get_webview_window("main") {
-                            let _ = win.eval(&format!("if (window.applyTheme) window.applyTheme('{theme_key}')"));
-                        }
-                        return;
-                    }
-
-                    match id {
+                    match event.id.as_ref() {
                         "show" => {
                             if let Some(win) = app.get_webview_window("main") {
                                 if win.is_visible().unwrap_or(false) {

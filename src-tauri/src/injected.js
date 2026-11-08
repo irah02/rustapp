@@ -1,7 +1,6 @@
 // RustApp Desktop Companion Script (WhatsApp Web)
 // Features: macOS/WebKit Calling & MediaDevices compatibility, MediaSession stub,
-// Notification bridging, Theme Switcher (Catppuccin, Gruvbox, Monochrome OLED, Nord, Default),
-// and Zoom shortcuts.
+// Notification bridging, Permission banner, and Zoom shortcuts.
 
 (function () {
   console.log('[RustApp] Companion script initialized');
@@ -585,268 +584,14 @@
     console.warn('[RustApp] Could not patch Notification:', e);
   }
 
-  // ==========================================
-  // 2. THEMES DEFINITIONS
-  // ==========================================
-  const THEMES = {
-    'catppuccin-mocha': {
-      name: 'Catppuccin Mocha',
-      icon: '☕',
-      css: `
-        :root, body, body.dark {
-          --app-background: #181825 !important;
-          --app-background-stripe: #11111b !important;
-          --conversation-panel-background: #181825 !important;
-          --panel-background: #1e1e2e !important;
-          --panel-background-lighter: #313244 !important;
-          --panel-background-colored: #313244 !important;
-          --panel-background-deep: #11111b !important;
-          --background-default: #1e1e2e !important;
-          --background-default-hover: #313244 !important;
-          --background-default-active: #45475a !important;
-          --incoming-background: #313244 !important;
-          --incoming-background-highlight: #45475a !important;
-          --outgoing-background: #45475a !important;
-          --outgoing-background-highlight: #585b70 !important;
-          --dropdown-background: #1e1e2e !important;
-          --modal-background: #1e1e2e !important;
-          --primary-strong: #cba6f7 !important;
-          --primary: #89b4fa !important;
-          --primary-title: #cdd6f4 !important;
-          --secondary: #a6adc8 !important;
-          --secondary-stronger: #bac2de !important;
-          --secondary-lighter: #6c7086 !important;
-          --border-default: #313244 !important;
-          --border-strong: #45475a !important;
-          --border-stronger: #585b70 !important;
-          --border-list: #313244 !important;
-          --border-panel: #313244 !important;
-          --border-bubble: rgba(205, 214, 244, 0.08) !important;
-          --compose-primary: #cdd6f4 !important;
-          --compose-input-background: #313244 !important;
-          --compose-input-border: #45475a !important;
-          --icon: #a6adc8 !important;
-          --icon-lighter: #6c7086 !important;
-          --icon-strong: #cdd6f4 !important;
-          --icon-fixed: #a6adc8 !important;
-          --unread-marker-background: #cba6f7 !important;
-          --unread-bar-background: #313244 !important;
-        }
-        [data-testid="msg-container"] {
-          border-radius: 10px !important;
-        }
-        span[data-testid="icon-unread-count"] {
-          background-color: #cba6f7 !important;
-          color: #11111b !important;
-          font-weight: bold !important;
-        }
-      `
-    },
-    'gruvbox-dark': {
-      name: 'Gruvbox Dark',
-      icon: '🌲',
-      css: `
-        :root, body, body.dark {
-          --app-background: #1d2021 !important;
-          --app-background-stripe: #1d2021 !important;
-          --conversation-panel-background: #1d2021 !important;
-          --panel-background: #282828 !important;
-          --panel-background-lighter: #3c3836 !important;
-          --panel-background-colored: #3c3836 !important;
-          --panel-background-deep: #1d2021 !important;
-          --background-default: #282828 !important;
-          --background-default-hover: #3c3836 !important;
-          --background-default-active: #504945 !important;
-          --incoming-background: #32302f !important;
-          --incoming-background-highlight: #3c3836 !important;
-          --outgoing-background: #3c3836 !important;
-          --outgoing-background-highlight: #504945 !important;
-          --dropdown-background: #282828 !important;
-          --modal-background: #282828 !important;
-          --primary-strong: #b8bb26 !important;
-          --primary: #fabd2f !important;
-          --primary-title: #ebdbb2 !important;
-          --secondary: #a89984 !important;
-          --secondary-stronger: #bdae93 !important;
-          --secondary-lighter: #7c6f64 !important;
-          --border-default: #3c3836 !important;
-          --border-strong: #504945 !important;
-          --border-stronger: #665c54 !important;
-          --border-list: #3c3836 !important;
-          --border-panel: #3c3836 !important;
-          --border-bubble: rgba(235, 219, 178, 0.08) !important;
-          --compose-primary: #ebdbb2 !important;
-          --compose-input-background: #32302f !important;
-          --compose-input-border: #504945 !important;
-          --icon: #a89984 !important;
-          --icon-lighter: #7c6f64 !important;
-          --icon-strong: #ebdbb2 !important;
-          --icon-fixed: #a89984 !important;
-          --unread-marker-background: #fabd2f !important;
-          --unread-bar-background: #3c3836 !important;
-        }
-        span[data-testid="icon-unread-count"] {
-          background-color: #fabd2f !important;
-          color: #1d2021 !important;
-          font-weight: bold !important;
-        }
-      `
-    },
-    'monochrome-oled': {
-      name: 'Monochrome OLED (Uber)',
-      icon: '🖤',
-      css: `
-        :root, body, body.dark {
-          --app-background: #000000 !important;
-          --app-background-stripe: #000000 !important;
-          --conversation-panel-background: #000000 !important;
-          --panel-background: #000000 !important;
-          --panel-background-lighter: #121212 !important;
-          --panel-background-colored: #121212 !important;
-          --panel-background-deep: #000000 !important;
-          --background-default: #000000 !important;
-          --background-default-hover: #171717 !important;
-          --background-default-active: #222222 !important;
-          --incoming-background: #141414 !important;
-          --incoming-background-highlight: #1f1f1f !important;
-          --outgoing-background: #242424 !important;
-          --outgoing-background-highlight: #303030 !important;
-          --dropdown-background: #0a0a0a !important;
-          --modal-background: #0a0a0a !important;
-          --primary-strong: #ffffff !important;
-          --primary: #ffffff !important;
-          --primary-title: #ffffff !important;
-          --secondary: #888888 !important;
-          --secondary-stronger: #cccccc !important;
-          --secondary-lighter: #555555 !important;
-          --border-default: #1c1c1c !important;
-          --border-strong: #262626 !important;
-          --border-stronger: #333333 !important;
-          --border-list: #1a1a1a !important;
-          --border-panel: #1a1a1a !important;
-          --border-bubble: rgba(255, 255, 255, 0.08) !important;
-          --compose-primary: #ffffff !important;
-          --compose-input-background: #111111 !important;
-          --compose-input-border: #262626 !important;
-          --icon: #888888 !important;
-          --icon-lighter: #555555 !important;
-          --icon-strong: #ffffff !important;
-          --icon-fixed: #888888 !important;
-          --unread-marker-background: #ffffff !important;
-          --unread-bar-background: #1c1c1c !important;
-        }
-        #app, [data-testid="chat-list"], [data-testid="conversation-panel-wrapper"] {
-          background-color: #000000 !important;
-        }
-        span[data-testid="icon-unread-count"] {
-          background-color: #ffffff !important;
-          color: #000000 !important;
-          font-weight: 900 !important;
-        }
-        [data-testid="msg-container"] {
-          border: 1px solid #202020 !important;
-        }
-      `
-    },
-    'nord': {
-      name: 'Nord Night',
-      icon: '❄️',
-      css: `
-        :root, body, body.dark {
-          --app-background: #242933 !important;
-          --app-background-stripe: #1e222a !important;
-          --conversation-panel-background: #242933 !important;
-          --panel-background: #2e3440 !important;
-          --panel-background-lighter: #3b4252 !important;
-          --panel-background-colored: #3b4252 !important;
-          --panel-background-deep: #1e222a !important;
-          --background-default: #2e3440 !important;
-          --background-default-hover: #3b4252 !important;
-          --background-default-active: #434c5e !important;
-          --incoming-background: #3b4252 !important;
-          --incoming-background-highlight: #434c5e !important;
-          --outgoing-background: #434c5e !important;
-          --outgoing-background-highlight: #4c566a !important;
-          --dropdown-background: #2e3440 !important;
-          --modal-background: #2e3440 !important;
-          --primary-strong: #88c0d0 !important;
-          --primary: #81a1c1 !important;
-          --primary-title: #eceff4 !important;
-          --secondary: #d8dee9 !important;
-          --secondary-stronger: #e5e9f0 !important;
-          --secondary-lighter: #4c566a !important;
-          --border-default: #3b4252 !important;
-          --border-strong: #434c5e !important;
-          --border-stronger: #4c566a !important;
-          --border-list: #3b4252 !important;
-          --border-panel: #3b4252 !important;
-          --border-bubble: rgba(236, 239, 244, 0.08) !important;
-          --compose-primary: #eceff4 !important;
-          --compose-input-background: #3b4252 !important;
-          --compose-input-border: #434c5e !important;
-          --icon: #d8dee9 !important;
-          --icon-lighter: #4c566a !important;
-          --icon-strong: #eceff4 !important;
-          --icon-fixed: #d8dee9 !important;
-          --unread-marker-background: #88c0d0 !important;
-          --unread-bar-background: #3b4252 !important;
-        }
-        span[data-testid="icon-unread-count"] {
-          background-color: #88c0d0 !important;
-          color: #2e3440 !important;
-          font-weight: bold !important;
-        }
-      `
-    },
-    'default': {
-      name: 'Default WhatsApp',
-      icon: '💬',
-      css: ''
-    }
-  };
-
-  const THEME_KEYS = Object.keys(THEMES);
-  let activeLabelEl = null;
-
-  function updateWidgetActiveLabel(themeKey) {
-    if (activeLabelEl && THEMES[themeKey]) {
-      activeLabelEl.textContent = `${THEMES[themeKey].icon} ${THEMES[themeKey].name}`;
-    }
-  }
-
-  function applyTheme(themeKey) {
-    if (!THEMES[themeKey]) themeKey = 'catppuccin-mocha';
-    try {
-      localStorage.setItem('wa_tauri_theme', themeKey);
-    } catch (_) {}
-
-    let styleEl = document.getElementById('wa-tauri-theme-style');
-    if (!styleEl) {
-      const parent = document.head || document.documentElement;
-      if (!parent) {
-        if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', () => applyTheme(themeKey), { once: true });
-        }
-        return;
-      }
-      styleEl = document.createElement('style');
-      styleEl.id = 'wa-tauri-theme-style';
-      parent.appendChild(styleEl);
-    }
-
-    styleEl.textContent = THEMES[themeKey].css;
-    updateWidgetActiveLabel(themeKey);
-    console.log(`[RustApp] Applied theme: ${THEMES[themeKey].name}`);
-  }
-
-  window.applyTheme = applyTheme;
-
-  function getActiveTheme() {
-    return localStorage.getItem('wa_tauri_theme') || 'catppuccin-mocha';
-  }
-
-  // Apply saved theme immediately
-  applyTheme(getActiveTheme());
+  // Clean up any legacy injected theme styles or widget
+  try {
+    const legacyStyle = document.getElementById('wa-tauri-theme-style');
+    if (legacyStyle) legacyStyle.remove();
+    const legacyWidget = document.getElementById('wa-tauri-widget-container');
+    if (legacyWidget) legacyWidget.remove();
+    localStorage.removeItem('wa_tauri_theme');
+  } catch (_) {}
 
   // ==========================================
   // 3. MEDIA PERMISSIONS PROMPT & REQUESTER
@@ -986,164 +731,7 @@
     });
   }
 
-  // ==========================================
-  // 4. FLOATING THEME SELECTOR WIDGET
-  // ==========================================
-  function createThemeWidget() {
-    if (document.getElementById('wa-tauri-widget-container')) return;
-
-    const container = document.createElement('div');
-    container.id = 'wa-tauri-widget-container';
-    container.innerHTML = `
-      <style>
-        #wa-tauri-widget-container {
-          position: fixed;
-          bottom: 14px;
-          left: 14px;
-          z-index: 999999;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-          user-select: none;
-        }
-        #wa-tauri-theme-btn {
-          background: rgba(20, 20, 20, 0.85);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          color: #ffffff;
-          border: 1px solid rgba(255, 255, 255, 0.16);
-          border-radius: 20px;
-          padding: 6px 12px;
-          font-size: 12px;
-          font-weight: 500;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-          opacity: 0.6;
-        }
-        #wa-tauri-theme-btn:hover {
-          opacity: 1;
-          transform: translateY(-2px);
-          border-color: rgba(255, 255, 255, 0.35);
-          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
-        }
-        #wa-tauri-theme-menu {
-          display: none;
-          position: absolute;
-          bottom: 38px;
-          left: 0;
-          background: rgba(24, 24, 27, 0.95);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          border-radius: 12px;
-          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
-          min-width: 210px;
-          padding: 6px;
-          flex-direction: column;
-          gap: 2px;
-        }
-        #wa-tauri-theme-menu.open {
-          display: flex;
-          animation: waFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        @keyframes waFadeIn {
-          from { opacity: 0; transform: translateY(6px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .wa-theme-item {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 10px;
-          font-size: 13px;
-          color: #e4e4e7;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: background 0.15s ease, color 0.15s ease;
-        }
-        .wa-theme-item:hover {
-          background: rgba(255, 255, 255, 0.12);
-          color: #ffffff;
-        }
-        .wa-theme-item.active {
-          background: rgba(255, 255, 255, 0.2);
-          font-weight: 600;
-          color: #ffffff;
-        }
-        .wa-theme-shortcut-hint {
-          font-size: 10px;
-          color: #71717a;
-          margin-top: 4px;
-          padding: 4px 8px;
-          border-top: 1px solid rgba(255, 255, 255, 0.08);
-          text-align: center;
-        }
-      </style>
-      <div id="wa-tauri-theme-btn" title="Toggle Theme (or press Ctrl+Shift+T)">
-        <span id="wa-tauri-active-label">🎨 Themes</span>
-      </div>
-      <div id="wa-tauri-theme-menu">
-        ${THEME_KEYS.map((k) => `
-          <div class="wa-theme-item ${getActiveTheme() === k ? 'active' : ''}" data-theme="${k}">
-            <span>${THEMES[k].icon}</span>
-            <span>${THEMES[k].name}</span>
-          </div>
-        `).join('')}
-        <div class="wa-theme-item" id="wa-btn-grant-call-perm" style="border-top: 1px solid rgba(255, 255, 255, 0.08); margin-top: 4px; color: #89b4fa;">
-          <span>🎙️</span>
-          <span>Approve Call Permissions</span>
-        </div>
-        <div class="wa-theme-shortcut-hint">Shortcut: Ctrl+Shift+T to cycle</div>
-      </div>
-    `;
-
-    document.body.appendChild(container);
-
-    const btn = document.getElementById('wa-tauri-theme-btn');
-    const menu = document.getElementById('wa-tauri-theme-menu');
-    const grantPermBtn = document.getElementById('wa-btn-grant-call-perm');
-    activeLabelEl = document.getElementById('wa-tauri-active-label');
-    updateWidgetActiveLabel(getActiveTheme());
-
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      menu.classList.toggle('open');
-    });
-
-    if (grantPermBtn) {
-      grantPermBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        menu.classList.remove('open');
-        const res = await requestRustAppMediaPermissions();
-        if (res.success) {
-          alert('✅ Permissions approved! Voice and video calls are ready.');
-        } else {
-          alert('⚠️ Permission prompt failed: ' + (res.error || 'Unknown'));
-        }
-      });
-    }
-
-    document.addEventListener('click', (e) => {
-      if (!container.contains(e.target)) {
-        menu.classList.remove('open');
-      }
-    });
-
-    menu.querySelectorAll('.wa-theme-item').forEach((item) => {
-      item.addEventListener('click', () => {
-        const theme = item.getAttribute('data-theme');
-        applyTheme(theme);
-        menu.querySelectorAll('.wa-theme-item').forEach((i) => i.classList.remove('active'));
-        item.classList.add('active');
-        menu.classList.remove('open');
-      });
-    });
-  }
-
   function initRustAppUI() {
-    createThemeWidget();
     showPermissionBanner();
   }
 
@@ -1154,20 +742,11 @@
   }
 
   // ==========================================
-  // 4. KEYBOARD SHORTCUTS (THEMES & ZOOM)
+  // 4. KEYBOARD SHORTCUTS (ZOOM)
   // ==========================================
   let currentZoom = 1.0;
 
   window.addEventListener('keydown', (e) => {
-    // Ctrl + Shift + T : Cycle theme
-    if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't')) {
-      e.preventDefault();
-      const current = getActiveTheme();
-      const nextIdx = (THEME_KEYS.indexOf(current) + 1) % THEME_KEYS.length;
-      applyTheme(THEME_KEYS[nextIdx]);
-      return;
-    }
-
     // Ctrl + Plus / Ctrl + Equal : Zoom In
     if (e.ctrlKey && (e.key === '=' || e.key === '+')) {
       e.preventDefault();
@@ -1191,9 +770,6 @@
   });
 
   setInterval(() => {
-    if (!document.getElementById('wa-tauri-widget-container')) {
-      createThemeWidget();
-    }
     if (localStorage.getItem('wa_rustapp_media_granted') !== 'true' && !document.getElementById('rustapp-perm-banner')) {
       showPermissionBanner();
     }
