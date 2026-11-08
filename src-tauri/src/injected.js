@@ -21,15 +21,6 @@
   }
 
   try {
-    Object.defineProperty(navigator, 'hardwareConcurrency', {
-      get: () => 16,
-      configurable: true,
-    });
-  } catch (e) {
-    console.warn('[RustApp] Could not override navigator.hardwareConcurrency:', e);
-  }
-
-  try {
     Object.defineProperty(navigator, 'vendor', {
       get: () => 'Apple Computer, Inc.',
       configurable: true,
@@ -51,7 +42,7 @@
   try {
     window.Module = window.Module || {};
     if (typeof window.Module.pthreadPoolSizeOverride !== 'number') {
-      window.Module.pthreadPoolSizeOverride = 40;
+      window.Module.pthreadPoolSizeOverride = 24;
     }
   } catch (e) {
     console.warn('[RustApp] Could not configure Module.pthreadPoolSizeOverride:', e);
