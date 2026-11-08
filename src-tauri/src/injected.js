@@ -42,6 +42,110 @@
     console.warn('[RustApp] Could not override navigator.maxTouchPoints:', e);
   }
 
+  // ==========================================
+  // SCTP & DATA CHANNEL KEEP-ALIVE STABILITY
+  // ==========================================
+  const globalActiveDataChannels = new Set();
+  function hasActiveDataChannels() {
+    for (const ch of globalActiveDataChannels) {
+      if (ch.readyState === 'open') return true;
+    }
+    return false;
+  }
+
+  // Intercept 20s SCTP connection timeout watchdog:
+  // WhatsApp sets a 20s watchdog timer in WAWebVoipSctpConnectionManager that drops the call
+  // if s.state is still 'Connecting'. When our media / data channel is active, suppress this watchdog.
+  try {
+    const origSetTimeout = window.setTimeout;
+    window.setTimeout = function (fn, delay) {
+      if (typeof fn === 'function' && delay >= 19000 && delay <= 21000) {
+        const fnStr = fn.toString();
+        if (fnStr.includes('connection_timeout') || fnStr.includes('Connecting')) {
+          console.log('[RustApp WebRTC] Intercepted 20s connection_timeout watchdog timer');
+          const guarded = function () {
+            if (hasActiveDataChannels()) {
+              console.warn('[RustApp WebRTC] Suppressed 20s connection_timeout watchdog because data channel is active!');
+              return;
+            }
+            return fn.apply(this, arguments);
+          };
+          return origSetTimeout.call(this, guarded, delay);
+        }
+      }
+      return origSetTimeout.apply(this, arguments);
+    };
+  } catch (e) {
+    console.warn('[RustApp] Could not wrap setTimeout:', e);
+  }
+
+  // Disable transferring RTCDataChannel across threads:
+  // In WebKitGTK with GStreamer webrtcbin, SCTP is bound to the main GLib thread.
+  // Transferring RTCDataChannel into a Web Worker pthread causes WhatsApp's worker
+  // not to receive events, leaving the connection state in 'Connecting' and triggering a timeout drop.
+  // When transfer throws DataCloneError, WhatsApp cleanly falls back to its built-in main-thread handlers.
+  function checkDataChannelTransfer(transfer) {
+    if (transfer && Array.isArray(transfer)) {
+      for (const item of transfer) {
+        if (item && (item instanceof RTCDataChannel || (item.constructor && item.constructor.name === 'RTCDataChannel'))) {
+          throw new DOMException('RTCDataChannel transfer is not supported', 'DataCloneError');
+        }
+      }
+    }
+  }
+
+  try {
+    if (typeof MessagePort !== 'undefined' && MessagePort.prototype.postMessage) {
+      const origMPPostMessage = MessagePort.prototype.postMessage;
+      MessagePort.prototype.postMessage = function (message, transfer) {
+        if (arguments.length > 1) checkDataChannelTransfer(arguments[1]);
+        return origMPPostMessage.apply(this, arguments);
+      };
+    }
+    if (typeof Worker !== 'undefined' && Worker.prototype.postMessage) {
+      const origWorkerPostMessage = Worker.prototype.postMessage;
+      Worker.prototype.postMessage = function (message, transfer) {
+        if (arguments.length > 1) checkDataChannelTransfer(arguments[1]);
+        return origWorkerPostMessage.apply(this, arguments);
+      };
+    }
+  } catch (e) {
+    console.warn('[RustApp] Could not wrap postMessage transfer check:', e);
+  }
+
+  // Ensure late onopen handler assignments fire if RTCDataChannel is already open:
+  // In WebKit, if a pre-negotiated channel opens before WhatsApp attaches ch.onopen,
+  // standard DOM EventTarget will not re-fire onopen. This guarantees WhatsApp's gt() handler runs.
+  try {
+    if (typeof RTCDataChannel !== 'undefined' && RTCDataChannel.prototype) {
+      const origOnopenDesc = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'onopen');
+      if (origOnopenDesc && origOnopenDesc.set) {
+        Object.defineProperty(RTCDataChannel.prototype, 'onopen', {
+          set: function (fn) {
+            origOnopenDesc.set.call(this, fn);
+            if (typeof fn === 'function' && this.readyState === 'open') {
+              console.log('[RustApp WebRTC] Channel ' + this.label + ' already open when onopen assigned; queueing open event');
+              queueMicrotask(() => {
+                try {
+                  fn.call(this, new Event('open'));
+                } catch (err) {
+                  console.error('[RustApp WebRTC] onopen handler threw:', err);
+                }
+              });
+            }
+          },
+          get: function () {
+            return origOnopenDesc.get.call(this);
+          },
+          configurable: true,
+          enumerable: true,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[RustApp] Could not wrap RTCDataChannel.onopen:', e);
+  }
+
   // Ensure WebRTC and legacy aliases are present, and patch GStreamer webrtcbin quirks
   try {
     if (window.RTCPeerConnection) {
@@ -104,11 +208,14 @@
           if (!ch) return;
           console.log('[RustApp WebRTC] Data channel registered: label=' + ch.label + ', id=' + ch.id + ', readyState=' + ch.readyState);
           let rxCount = 0;
+          globalActiveDataChannels.add(ch);
           ch.addEventListener('open', () => {
             console.log('[RustApp WebRTC] Data channel OPEN: ' + ch.label);
+            globalActiveDataChannels.add(ch);
             markConnected('dc-open:' + ch.label);
           });
           ch.addEventListener('close', () => {
+            globalActiveDataChannels.delete(ch);
             console.warn('[RustApp WebRTC] Data channel CLOSED: ' + ch.label + ' (rxMsgs=' + rxCount + ')');
           });
           ch.addEventListener('error', (e) => {
@@ -116,11 +223,13 @@
           });
           ch.addEventListener('message', () => {
             rxCount++;
+            globalActiveDataChannels.add(ch);
             if (rxCount === 1 || rxCount % 200 === 0) {
               console.log('[RustApp WebRTC] Data channel ' + ch.label + ' active, rxMsgs=' + rxCount);
             }
           });
           if (ch.readyState === 'open') {
+            globalActiveDataChannels.add(ch);
             markConnected('dc-already-open:' + ch.label);
           }
         }
