@@ -47,13 +47,97 @@
     if (window.RTCPeerConnection) {
       const NativePC = window.RTCPeerConnection;
 
+      function setupConnectionStateSync(pc) {
+        let isClosed = false;
+        let spoofedConn = null;
+        let spoofedIce = null;
+
+        const nativeConnDesc = Object.getOwnPropertyDescriptor(NativePC.prototype, 'connectionState');
+        const nativeIceDesc = Object.getOwnPropertyDescriptor(NativePC.prototype, 'iceConnectionState');
+
+        function getNativeConn() {
+          try {
+            return nativeConnDesc ? nativeConnDesc.get.call(pc) : pc.connectionState;
+          } catch (_) {
+            return 'new';
+          }
+        }
+
+        function getNativeIce() {
+          try {
+            return nativeIceDesc ? nativeIceDesc.get.call(pc) : pc.iceConnectionState;
+          } catch (_) {
+            return 'new';
+          }
+        }
+
+        Object.defineProperty(pc, 'connectionState', {
+          get: function () {
+            if (isClosed) return 'closed';
+            if (spoofedConn) return spoofedConn;
+            return getNativeConn();
+          },
+          configurable: true,
+        });
+
+        Object.defineProperty(pc, 'iceConnectionState', {
+          get: function () {
+            if (isClosed) return 'closed';
+            if (spoofedIce) return spoofedIce;
+            return getNativeIce();
+          },
+          configurable: true,
+        });
+
+        function markConnected() {
+          if (isClosed) return;
+          const currentConn = getNativeConn();
+          if (currentConn !== 'connected' && spoofedConn !== 'connected') {
+            spoofedConn = 'connected';
+            spoofedIce = 'connected';
+            console.log('[RustApp WebRTC] Data channel active: transitioning connectionState -> connected');
+            pc.dispatchEvent(new Event('iceconnectionstatechange'));
+            pc.dispatchEvent(new Event('connectionstatechange'));
+          }
+        }
+
+        function watchChannel(ch) {
+          if (!ch) return;
+          ch.addEventListener('open', markConnected);
+          if (ch.readyState === 'open') {
+            markConnected();
+          }
+        }
+
+        const origCDC = pc.createDataChannel;
+        pc.createDataChannel = function () {
+          const ch = origCDC.apply(pc, arguments);
+          watchChannel(ch);
+          return ch;
+        };
+
+        pc.addEventListener('datachannel', function (e) {
+          watchChannel(e.channel);
+        });
+
+        const origClose = pc.close;
+        pc.close = function () {
+          isClosed = true;
+          spoofedConn = 'closed';
+          spoofedIce = 'closed';
+          return origClose.apply(pc, arguments);
+        };
+      }
+
       // Force bundlePolicy: 'max-bundle' because GStreamer webrtcbin only implements max-bundle
       const PCProxy = new Proxy(NativePC, {
         construct(target, args, newTarget) {
           const config = args[0] ? Object.assign({}, args[0]) : {};
           config.bundlePolicy = 'max-bundle';
           args[0] = config;
-          return Reflect.construct(target, args, newTarget);
+          const pc = Reflect.construct(target, args, newTarget);
+          setupConnectionStateSync(pc);
+          return pc;
         },
       });
       PCProxy.prototype = NativePC.prototype;
