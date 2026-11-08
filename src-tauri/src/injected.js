@@ -230,9 +230,59 @@
       window.webkitRTCPeerConnection = PCProxy;
     }
 
-    if (window.AudioContext && !window.webkitAudioContext) {
-      window.webkitAudioContext = window.AudioContext;
+    if (window.AudioContext) {
+      const OrigAC = window.AudioContext;
+      const ACPoly = new Proxy(OrigAC, {
+        construct(target, args, newTarget) {
+          const ctx = Reflect.construct(target, args, newTarget);
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+          ctx.addEventListener('statechange', () => {
+            console.log('[RustApp Audio] AudioContext state:', ctx.state);
+            if (ctx.state === 'suspended') {
+              ctx.resume().catch(() => {});
+            }
+          });
+          return ctx;
+        },
+      });
+      ACPoly.prototype = OrigAC.prototype;
+      window.AudioContext = ACPoly;
+      window.webkitAudioContext = ACPoly;
     }
+
+    // Direct destination bridge: WhatsApp connects AudioWorkletNode -> MediaStreamAudioDestinationNode -> <audio>.
+    // In WebKitGTK, MediaStreamDestination -> <audio> playback can stall. Bridging to AudioContext.destination
+    // delivers incoming VoIP audio directly to PipeWire/PulseAudio.
+    if (window.AudioNode) {
+      const origConnect = AudioNode.prototype.connect;
+      AudioNode.prototype.connect = function (dest) {
+        if (dest && typeof MediaStreamAudioDestinationNode !== 'undefined' && dest instanceof MediaStreamAudioDestinationNode) {
+          console.log('[RustApp Audio] Bridging AudioNode directly to AudioContext.destination');
+          try {
+            if (this.context && this.context.state === 'suspended') {
+              this.context.resume().catch(() => {});
+            }
+            origConnect.call(this, this.context.destination);
+          } catch (e) {
+            console.warn('[RustApp Audio] Bridge to destination failed:', e);
+          }
+        }
+        return origConnect.apply(this, arguments);
+      };
+    }
+
+    // Ensure all <audio> playback elements are unmuted, at full volume, and playing
+    setInterval(function () {
+      document.querySelectorAll('audio').forEach(function (a) {
+        if (a.muted) a.muted = false;
+        if (a.volume < 1) a.volume = 1;
+        if (a.paused && a.srcObject) {
+          a.play().catch(function () {});
+        }
+      });
+    }, 500);
   } catch (e) {
     console.warn('[RustApp] Could not bind legacy WebRTC/Audio aliases:', e);
   }
