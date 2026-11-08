@@ -51,14 +51,13 @@
         let isClosed = false;
         let spoofedConn = null;
         let spoofedIce = null;
-        const BAD_STATES = ['disconnected', 'failed', 'closed'];
 
         const nativeConnDesc = Object.getOwnPropertyDescriptor(NativePC.prototype, 'connectionState');
         const nativeIceDesc = Object.getOwnPropertyDescriptor(NativePC.prototype, 'iceConnectionState');
 
         function getNativeConn() {
           try {
-            return nativeConnDesc ? nativeConnDesc.get.call(pc) : pc.connectionState;
+            return nativeConnDesc ? nativeConnDesc.get.call(pc) : 'new';
           } catch (_) {
             return 'new';
           }
@@ -66,7 +65,7 @@
 
         function getNativeIce() {
           try {
-            return nativeIceDesc ? nativeIceDesc.get.call(pc) : pc.iceConnectionState;
+            return nativeIceDesc ? nativeIceDesc.get.call(pc) : 'new';
           } catch (_) {
             return 'new';
           }
@@ -75,10 +74,8 @@
         Object.defineProperty(pc, 'connectionState', {
           get: function () {
             if (isClosed) return 'closed';
-            const native = getNativeConn();
-            if (BAD_STATES.includes(native)) return native;
             if (spoofedConn) return spoofedConn;
-            return native;
+            return getNativeConn();
           },
           configurable: true,
         });
@@ -86,10 +83,8 @@
         Object.defineProperty(pc, 'iceConnectionState', {
           get: function () {
             if (isClosed) return 'closed';
-            const native = getNativeIce();
-            if (BAD_STATES.includes(native)) return native;
             if (spoofedIce) return spoofedIce;
-            return native;
+            return getNativeIce();
           },
           configurable: true,
         });
@@ -100,24 +95,15 @@
           if (currentConn !== 'connected' && spoofedConn !== 'connected') {
             spoofedConn = 'connected';
             spoofedIce = 'connected';
-            console.log('[RustApp WebRTC] Data channel active (native: ' + currentConn + '): transitioning connectionState -> connected');
+            console.log('[RustApp WebRTC] Data channel active: transitioning connectionState -> connected');
             pc.dispatchEvent(new Event('iceconnectionstatechange'));
             pc.dispatchEvent(new Event('connectionstatechange'));
-          }
-        }
-
-        function handleChannelClosed() {
-          if (!isClosed) {
-            spoofedConn = null;
-            spoofedIce = null;
           }
         }
 
         function watchChannel(ch) {
           if (!ch) return;
           ch.addEventListener('open', markConnected);
-          ch.addEventListener('close', handleChannelClosed);
-          ch.addEventListener('error', handleChannelClosed);
           if (ch.readyState === 'open') {
             markConnected();
           }
