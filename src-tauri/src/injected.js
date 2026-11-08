@@ -637,6 +637,7 @@
   window.requestRustAppMediaPermissions = requestRustAppMediaPermissions;
 
   function showPermissionBanner() {
+    if (window.opener) return;
     if (localStorage.getItem('wa_rustapp_media_granted') === 'true') return;
     if (document.getElementById('rustapp-perm-banner')) return;
 
@@ -789,7 +790,7 @@
     }
   }
 
-  if (localStorage.getItem('wa_rustapp_media_granted') !== 'true') {
+  if (localStorage.getItem('wa_rustapp_media_granted') !== 'true' && !window.opener) {
     permInterval = setInterval(checkPermBanner, 2500);
   }
 })();

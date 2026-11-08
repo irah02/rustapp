@@ -84,15 +84,68 @@ pub fn run() {
 
             tray_builder.build(app)?;
 
+            let app_handle_for_new_win = app.handle().clone();
             let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[0])?
                 .initialization_script(INJECTED_SCRIPT)
-                .on_new_window(|url, _features| {
+                .on_new_window(move |url, features| {
                     let is_whatsapp = url.host_str() == Some("web.whatsapp.com")
                         || url.as_str() == "about:blank"
                         || url.scheme() == "about";
 
                     if is_whatsapp {
-                        tauri::webview::NewWindowResponse::Allow
+                        static POPUP_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+                        let label = format!("call-popup-{}", POPUP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+
+                        #[cfg(target_os = "linux")]
+                        let related_wv = features.opener().webview.clone();
+
+                        let builder = tauri::WebviewWindowBuilder::new(
+                            &app_handle_for_new_win,
+                            label,
+                            tauri::WebviewUrl::External(url),
+                        )
+                        .title("WhatsApp Call")
+                        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15")
+                        .initialization_script(INJECTED_SCRIPT);
+
+                        #[cfg(target_os = "linux")]
+                        let builder = builder.with_related_view(related_wv);
+
+                        let builder = builder.window_features(features);
+
+                        match builder.build() {
+                            Ok(new_win) => {
+                                #[cfg(target_os = "linux")]
+                                {
+                                    use webkit2gtk::{PermissionRequestExt, SettingsExt, WebViewExt};
+                                    let _ = new_win.with_webview(|webview| {
+                                        let wv = webview.inner();
+                                        if let Some(settings) = wv.settings() {
+                                            settings.set_enable_webrtc(true);
+                                            settings.set_enable_media_stream(true);
+                                            settings.set_enable_mediasource(true);
+                                            settings.set_enable_webgl(true);
+                                            settings.set_enable_encrypted_media(true);
+                                            settings.set_enable_media_capabilities(true);
+                                            settings.set_hardware_acceleration_policy(webkit2gtk::HardwareAccelerationPolicy::Always);
+                                            settings.set_media_playback_requires_user_gesture(false);
+                                            settings.set_enable_developer_extras(true);
+                                            settings.set_user_agent(Some("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"));
+                                        }
+                                        wv.connect_permission_request(|_wv, req| {
+                                            println!("[RustApp Popup WebKit] PermissionRequest received and allowed");
+                                            req.allow();
+                                            true
+                                        });
+                                    });
+                                }
+                                tauri::webview::NewWindowResponse::Create { window: new_win }
+                            }
+                            Err(e) => {
+                                eprintln!("[RustApp] Failed to create popup window: {e}");
+                                tauri::webview::NewWindowResponse::Deny
+                            }
+                        }
                     } else {
                         let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
                         tauri::webview::NewWindowResponse::Deny
@@ -126,7 +179,6 @@ pub fn run() {
                         settings.set_enable_write_console_messages_to_stdout(is_debug);
                         settings.set_javascript_can_open_windows_automatically(true);
                         settings.set_enable_smooth_scrolling(true);
-                        settings.set_enable_dns_prefetching(true);
                         settings.set_enable_back_forward_navigation_gestures(false);
                         settings.set_user_agent(Some("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"));
                     }
