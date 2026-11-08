@@ -89,39 +89,74 @@
           configurable: true,
         });
 
-        function markConnected() {
+        function markConnected(source) {
           if (isClosed) return;
           const currentConn = getNativeConn();
-          if (currentConn !== 'connected' && spoofedConn !== 'connected') {
-            spoofedConn = 'connected';
-            spoofedIce = 'connected';
-            console.log('[RustApp WebRTC] Data channel active: transitioning connectionState -> connected');
-            pc.dispatchEvent(new Event('iceconnectionstatechange'));
-            pc.dispatchEvent(new Event('connectionstatechange'));
-          }
+          const currentIce = getNativeIce();
+          spoofedConn = 'connected';
+          spoofedIce = 'connected';
+          console.log('[RustApp WebRTC] Ensuring connected state via ' + (source || 'dc') + ' (native conn=' + currentConn + ', ice=' + currentIce + ')');
+          pc.dispatchEvent(new Event('iceconnectionstatechange'));
+          pc.dispatchEvent(new Event('connectionstatechange'));
         }
 
         function watchChannel(ch) {
           if (!ch) return;
-          ch.addEventListener('open', markConnected);
+          console.log('[RustApp WebRTC] Data channel registered: label=' + ch.label + ', id=' + ch.id + ', readyState=' + ch.readyState);
+          let rxCount = 0;
+          ch.addEventListener('open', () => {
+            console.log('[RustApp WebRTC] Data channel OPEN: ' + ch.label);
+            markConnected('dc-open:' + ch.label);
+          });
+          ch.addEventListener('close', () => {
+            console.warn('[RustApp WebRTC] Data channel CLOSED: ' + ch.label + ' (rxMsgs=' + rxCount + ')');
+          });
+          ch.addEventListener('error', (e) => {
+            console.error('[RustApp WebRTC] Data channel ERROR: ' + ch.label, e);
+          });
+          ch.addEventListener('message', () => {
+            rxCount++;
+            if (rxCount === 1 || rxCount % 200 === 0) {
+              console.log('[RustApp WebRTC] Data channel ' + ch.label + ' active, rxMsgs=' + rxCount);
+            }
+          });
           if (ch.readyState === 'open') {
-            markConnected();
+            markConnected('dc-already-open:' + ch.label);
           }
         }
 
         const origCDC = pc.createDataChannel;
         pc.createDataChannel = function () {
+          console.log('[RustApp WebRTC] createDataChannel called: label=' + arguments[0]);
           const ch = origCDC.apply(pc, arguments);
           watchChannel(ch);
           return ch;
         };
 
         pc.addEventListener('datachannel', function (e) {
+          console.log('[RustApp WebRTC] datachannel event received: label=' + (e.channel && e.channel.label));
           watchChannel(e.channel);
+        });
+
+        pc.addEventListener('connectionstatechange', function () {
+          console.log('[RustApp WebRTC] native connectionstatechange -> ' + getNativeConn() + ' (reported: ' + pc.connectionState + ')');
+        });
+
+        pc.addEventListener('iceconnectionstatechange', function () {
+          console.log('[RustApp WebRTC] native iceconnectionstatechange -> ' + getNativeIce() + ' (reported: ' + pc.iceConnectionState + ')');
+        });
+
+        pc.addEventListener('signalingstatechange', function () {
+          console.log('[RustApp WebRTC] signalingstatechange -> ' + pc.signalingState);
+        });
+
+        pc.addEventListener('icegatheringstatechange', function () {
+          console.log('[RustApp WebRTC] icegatheringstatechange -> ' + pc.iceGatheringState);
         });
 
         const origClose = pc.close;
         pc.close = function () {
+          console.warn('[RustApp WebRTC] pc.close() called! Call stack:\n' + (new Error().stack || ''));
           isClosed = true;
           spoofedConn = 'closed';
           spoofedIce = 'closed';
@@ -135,6 +170,7 @@
           const config = args[0] ? Object.assign({}, args[0]) : {};
           config.bundlePolicy = 'max-bundle';
           args[0] = config;
+          console.log('[RustApp WebRTC] new RTCPeerConnection(bundlePolicy=max-bundle)');
           const pc = Reflect.construct(target, args, newTarget);
           setupConnectionStateSync(pc);
           return pc;
@@ -148,6 +184,7 @@
       // Patch addIceCandidate to ensure sdpMLineIndex is populated if sdpMid is present
       const origAddIceCandidate = NativePC.prototype.addIceCandidate;
       NativePC.prototype.addIceCandidate = function (candidate) {
+        const repr = candidate ? (candidate.candidate ? candidate.candidate.substring(0, 45) + '... (mid=' + candidate.sdpMid + ')' : '[end-of-candidates]') : 'null';
         if (candidate && (candidate.sdpMLineIndex === null || candidate.sdpMLineIndex === undefined)) {
           if (candidate.sdpMid !== null && candidate.sdpMid !== undefined) {
             const parsedMid = parseInt(candidate.sdpMid, 10);
@@ -163,7 +200,11 @@
             } catch (_) {}
           }
         }
-        return origAddIceCandidate.call(this, candidate);
+        return origAddIceCandidate.call(this, candidate)
+          .catch((err) => {
+            console.warn('[RustApp WebRTC] addIceCandidate rejected (' + repr + '):', err);
+            throw err;
+          });
       };
 
       window.RTCPeerConnection = PCProxy;
@@ -188,6 +229,11 @@
         },
       });
       ACPoly.prototype = OrigAC.prototype;
+      const origACClose = OrigAC.prototype.close;
+      OrigAC.prototype.close = function () {
+        console.warn('[RustApp Audio] AudioContext.close() called! Call stack:\n' + (new Error().stack || ''));
+        return origACClose.apply(this, arguments);
+      };
       window.AudioContext = ACPoly;
       window.webkitAudioContext = ACPoly;
     }
@@ -239,11 +285,21 @@
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
 
+      function monitorTracks(stream) {
+        if (!stream) return;
+        stream.getTracks().forEach((t) => {
+          t.addEventListener('ended', () => console.warn('[RustApp Media] Track ENDED: ' + t.kind + ' (' + t.label + ')'));
+          t.addEventListener('mute', () => console.warn('[RustApp Media] Track MUTED: ' + t.kind + ' (' + t.label + ')'));
+          t.addEventListener('unmute', () => console.log('[RustApp Media] Track UNMUTED: ' + t.kind + ' (' + t.label + ')'));
+        });
+      }
+
       navigator.mediaDevices.getUserMedia = async function (constraints) {
         console.log('[RustApp GUM] Requested constraints:', JSON.stringify(constraints));
         try {
           const stream = await origGUM(constraints);
           console.log('[RustApp GUM] Stream acquired successfully with tracks:', stream.getTracks().map((t) => t.kind + ':' + t.label).join(', '));
+          monitorTracks(stream);
           return stream;
         } catch (err) {
           console.warn('[RustApp GUM] Initial getUserMedia failed (' + err.name + ': ' + err.message + '), trying relaxed constraints...');
@@ -253,6 +309,7 @@
           try {
             const stream = await origGUM(relaxed);
             console.log('[RustApp GUM] Relaxed stream acquired with tracks:', stream.getTracks().map((t) => t.kind).join(', '));
+            monitorTracks(stream);
             return stream;
           } catch (err2) {
             console.error('[RustApp GUM] Relaxed stream also failed:', err2);
