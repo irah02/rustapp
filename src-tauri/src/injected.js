@@ -108,6 +108,21 @@
       window.webkitAudioContext = ACPoly;
     }
 
+    if (window.AudioWorkletNode) {
+      const OrigAWN = window.AudioWorkletNode;
+      const AWNPoly = new Proxy(OrigAWN, {
+        construct(target, args, newTarget) {
+          const node = Reflect.construct(target, args, newTarget);
+          try {
+            node.__processorName = args[1] || '';
+          } catch (_) {}
+          return node;
+        },
+      });
+      AWNPoly.prototype = OrigAWN.prototype;
+      window.AudioWorkletNode = AWNPoly;
+    }
+
     // Direct destination bridge: WhatsApp connects AudioWorkletNode -> MediaStreamAudioDestinationNode -> <audio>.
     // In WebKitGTK, MediaStreamDestination -> <audio> playback can stall. Bridging to AudioContext.destination
     // delivers incoming VoIP audio directly to PipeWire/PulseAudio.
@@ -119,7 +134,7 @@
           if (typeof AudioWorkletNode !== 'undefined' && !(this instanceof AudioWorkletNode)) {
             return origConnect.apply(this, arguments);
           }
-          console.log('[RustApp Audio] Bridging AudioWorkletNode directly to AudioContext.destination');
+          console.log('[RustApp Audio] Bridging AudioWorkletNode (' + (this.__processorName || 'worklet') + ') directly to AudioContext.destination');
           try {
             if (this.context && this.context.state === 'suspended') {
               this.context.resume().catch(() => {});

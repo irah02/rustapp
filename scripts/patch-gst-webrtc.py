@@ -10,7 +10,8 @@ Safety features of this patch:
 1. Dynamic distro path resolution (pkg-config, /usr/lib, /usr/lib64, /usr/lib/x86_64-linux-gnu).
 2. Asserts that the target pattern occurs EXACTLY ONCE in the entire binary.
 3. Verifies that the preceding length checks (<= 256 bytes, >= min_len) remain intact.
-4. Preserves the exact stack frame restoration (pop rbx; pop r12; pop rbp; ret).
+4. Verifies the exact function prologue register push order (push rbp -> push r12 -> push rbx)
+   to mathematically guarantee the epilogue (pop rbx -> pop r12 -> pop rbp -> ret) is valid.
 5. Writes metadata for staleness detection after system upgrades.
 """
 
@@ -83,6 +84,18 @@ def main():
         sys.exit(1)
 
     print("Verified function context: length checks (<= 256 bytes) are intact.")
+
+    # Verify prologue register pushes: push %rbp (55), push %r12 (41 54), push %rbx (53)
+    window = data[max(0, pos - 60):pos]
+    rbp_idx = window.find(b"\x55")
+    r12_idx = window.find(b"\x41\x54")
+    rbx_idx = window.find(b"\x53")
+
+    if not (0 <= rbp_idx < r12_idx < rbx_idx):
+        print("Error: Function prologue verification failed (unexpected register push sequence). Aborting.")
+        sys.exit(1)
+
+    print("Verified function prologue: %rbp -> %r12 -> %rbx stack frame confirmed.")
 
     # Replacement bytes:
     # mov eax, 1   (b8 01 00 00 00)
