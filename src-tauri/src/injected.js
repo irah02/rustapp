@@ -50,143 +50,7 @@
     }, 2000);
   })();
 
-  // ==========================================
-  // CAPTURE DIAGNOSTIC & FIX (Claude Diagnostic)
-  // ==========================================
-  (function () {
-    const CFG = {
-      fixStyle: true,      // make the hidden capture <video> actually paint and play
-      canvasFrames: false, // build VideoFrames from a canvas copy instead of the <video>
-    };
-    const log = function () { console.log.apply(console, ['[CAPDBG]'].concat([].slice.call(arguments))); };
-    const counts = { rvfc: 0, vfOk: 0, vfErr: 0, vfCanvas: 0 };
 
-    // 1. Count and safeguard requestVideoFrameCallback firings with a 40ms watchdog fallback.
-    const origRvfc = HTMLVideoElement.prototype.requestVideoFrameCallback;
-    if (origRvfc) {
-      HTMLVideoElement.prototype.requestVideoFrameCallback = function (cb) {
-        let fired = false;
-        let timer = null;
-        const v = this;
-        const wrapped = (now, meta) => {
-          if (!fired) {
-            fired = true;
-            if (timer) clearTimeout(timer);
-            counts.rvfc++;
-            cb(now, meta || { presentationTime: performance.now(), captureTime: performance.now() });
-          }
-        };
-        timer = setTimeout(() => {
-          if (!fired && (v.readyState >= 2 || v.videoWidth > 0)) {
-            fired = true;
-            counts.rvfc++;
-            cb(performance.now(), { presentationTime: performance.now(), captureTime: performance.now() });
-          }
-        }, 40);
-        return origRvfc.call(this, wrapped);
-      };
-    }
-
-    // 2. Wrap VideoFrame construction (with auto-fallback to canvas if element construct fails).
-    if (window.VideoFrame) {
-      const OrigVF = window.VideoFrame;
-      let canvas = null, ctx = null, firstLogged = false;
-      window.VideoFrame = new Proxy(OrigVF, {
-        construct: function (target, args, newTarget) {
-          try {
-            let a = args;
-            const src = args[0];
-            if (CFG.canvasFrames && src instanceof HTMLVideoElement && src.videoWidth > 0) {
-              if (!canvas) { canvas = document.createElement('canvas'); ctx = canvas.getContext('2d'); }
-              if (canvas.width !== src.videoWidth || canvas.height !== src.videoHeight) {
-                canvas.width = src.videoWidth; canvas.height = src.videoHeight;
-              }
-              ctx.drawImage(src, 0, 0);
-              const init = Object.assign({ timestamp: Math.round(performance.now() * 1000) }, args[1] || {});
-              a = [canvas, init];
-              counts.vfCanvas++;
-            }
-            const vf = Reflect.construct(target, a, newTarget);
-            counts.vfOk++;
-            if (!firstLogged) {
-              firstLogged = true;
-              log('first VideoFrame ok', vf.codedWidth + 'x' + vf.codedHeight, 'format=' + vf.format);
-            }
-            return vf;
-          } catch (e) {
-            counts.vfErr++;
-            if (counts.vfErr <= 3) log('VideoFrame construct failed (enabling canvasFrames fallback):', e && e.message);
-            CFG.canvasFrames = true;
-            throw e;
-          }
-        },
-      });
-    }
-
-    // 3. Instant style & play helper for capture <video> elements
-    function ensureCaptureVideo(v) {
-      if (!v || !v.srcObject) return;
-      if (CFG.fixStyle && (v.style.opacity == 0 || v.style.width === '1px' || v.style.height === '1px')) {
-        v.style.cssText = 'position:fixed;bottom:0;right:0;width:160px;height:90px;opacity:0.01;pointer-events:none;z-index:-1;';
-        v.muted = true;
-        v.playsInline = true;
-        if (v.paused) { v.play().catch(function (e) { log('play() failed:', e && e.message); }); }
-        log('applied fixStyle to a capture <video>');
-      }
-    }
-
-    // Hook HTMLMediaElement srcObject setter for instant response
-    try {
-      const origSrcObj = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
-      if (origSrcObj && origSrcObj.set) {
-        const origSet = origSrcObj.set;
-        Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
-          set: function (val) {
-            const res = origSet.call(this, val);
-            if (val && this instanceof HTMLVideoElement) {
-              ensureCaptureVideo(this);
-            }
-            return res;
-          },
-          get: origSrcObj.get,
-          configurable: true,
-        });
-      }
-    } catch (_) {}
-
-    // 3b. Periodic inspection of <video> elements
-    setInterval(function () {
-      document.querySelectorAll('video').forEach(function (v) {
-        if (!v.srcObject) return;
-        ensureCaptureVideo(v);
-        const key = [v.readyState, v.videoWidth + 'x' + v.videoHeight, v.paused].join('|');
-        if (v.__capKey !== key) {
-          v.__capKey = key;
-          log('video state: readyState=' + v.readyState + ' size=' + v.videoWidth + 'x' + v.videoHeight +
-              ' paused=' + v.paused + ' style=' + JSON.stringify(v.style.cssText.slice(0, 60)));
-        }
-      });
-    }, 500);
-
-    // 3c. Inspect <canvas> elements (used for incoming remote video rendering & self preview)
-    setInterval(function () {
-      document.querySelectorAll('canvas').forEach(function (c) {
-        const key = [c.width + 'x' + c.height, c.offsetWidth + 'x' + c.offsetHeight, c.style.display, c.style.visibility].join('|');
-        if (c.__capKey !== key) {
-          c.__capKey = key;
-          log('canvas state: buffer=' + c.width + 'x' + c.height + ' layout=' + c.offsetWidth + 'x' + c.offsetHeight +
-              ' class=' + JSON.stringify(c.className) + ' style=' + JSON.stringify(c.style.cssText.slice(0, 60)));
-        }
-      });
-    }, 1000);
-
-    // 4. Periodic summary, only when something changed.
-    let last = '';
-    setInterval(function () {
-      const s = JSON.stringify(counts);
-      if (s !== last) { last = s; log('counts ' + s); }
-    }, 2000);
-  })();
 
   // ==========================================
   // 1. CALLING & ENVIRONMENT COMPATIBILITY
@@ -270,15 +134,6 @@
         return origAddIceCandidate.call(this, candidate);
       };
 
-      // Patch close to guarantee all video capture tracks are stopped on call teardown
-      const origClose = NativePC.prototype.close;
-      NativePC.prototype.close = function () {
-        try {
-          if (window.__rustappCleanupStreams) window.__rustappCleanupStreams();
-        } catch (_) {}
-        return origClose.apply(this, arguments);
-      };
-
       window.RTCPeerConnection = PCProxy;
       window.webkitRTCPeerConnection = PCProxy;
     }
@@ -344,48 +199,11 @@
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
 
-      // Active video track tracking and V4L2 device exclusivity manager.
-      // On Linux/GStreamer, /dev/video* can only be opened by one pipeline at a time.
-      // WhatsApp probes permissions (audio+video) and renegotiates resolutions (1280x720 -> 640x480)
-      // leaving earlier streams alive and causing "Device is busy" (EBUSY) on subsequent streams,
-      // which leaves the capture element stuck at readyState=0 and trips SelfCameraAutoOff.
-      const activeVideoTracks = new Set();
-
-      function stopPreviousVideoTracks() {
-        if (activeVideoTracks.size > 0) {
-          console.log('[RustApp GUM] Releasing ' + activeVideoTracks.size + ' active video track(s) for V4L2 exclusivity');
-          for (const track of activeVideoTracks) {
-            try {
-              track.stop();
-            } catch (_) {}
-          }
-          activeVideoTracks.clear();
-          return true;
-        }
-        return false;
-      }
-
-      window.__rustappCleanupStreams = stopPreviousVideoTracks;
-      window.addEventListener('beforeunload', stopPreviousVideoTracks);
-
       navigator.mediaDevices.getUserMedia = async function (constraints) {
         console.log('[RustApp GUM] Requested constraints:', JSON.stringify(constraints));
-        if (constraints && constraints.video) {
-          const released = stopPreviousVideoTracks();
-          if (released) {
-            // Small pause to guarantee V4L2 device file descriptor is released by GStreamer/kernel
-            await new Promise((r) => setTimeout(r, 40));
-          }
-        }
         try {
           const stream = await origGUM(constraints);
           console.log('[RustApp GUM] Stream acquired successfully with tracks:', stream.getTracks().map((t) => t.kind + ':' + t.label).join(', '));
-          stream.getVideoTracks().forEach((track) => {
-            activeVideoTracks.add(track);
-            track.addEventListener('ended', () => {
-              activeVideoTracks.delete(track);
-            }, { once: true });
-          });
           return stream;
         } catch (err) {
           console.warn('[RustApp GUM] Initial getUserMedia failed (' + err.name + ': ' + err.message + '), trying relaxed constraints...');
@@ -395,12 +213,6 @@
           try {
             const stream = await origGUM(relaxed);
             console.log('[RustApp GUM] Relaxed stream acquired with tracks:', stream.getTracks().map((t) => t.kind).join(', '));
-            stream.getVideoTracks().forEach((track) => {
-              activeVideoTracks.add(track);
-              track.addEventListener('ended', () => {
-                activeVideoTracks.delete(track);
-              }, { once: true });
-            });
             return stream;
           } catch (err2) {
             console.error('[RustApp GUM] Relaxed stream also failed:', err2);
